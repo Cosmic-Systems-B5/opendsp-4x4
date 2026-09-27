@@ -85,7 +85,7 @@
   const GRID_DB = [12, 6, 0, -6, -12];
   const fLabel = (f: number) => (f >= 1000 ? `${f / 1000}k` : `${f}`);
 </script>
-
+<div class="eq-wrap">
 <svg bind:this={svgEl} viewBox="0 0 {W} {H}" class="eq" onwheel={onWheel} role="img" aria-label="EQ response">
   <!-- grid -->
   {#each GRID_F as f}
@@ -134,8 +134,10 @@
     <span class="muted">drag a band · wheel = bandwidth · double-click = reset · right-click = type</span>
   {/if}
 </div>
+</div>
 
 <style>
+  .eq-wrap { display: flex; margin: 0.5rem 0;}
   .eq { width: 100%; max-width: 900px; height: auto; display: block; background: #0a0d12; border: 1px solid var(--line); border-radius: var(--radius); touch-action: none; }
   .grid { stroke: #1c2430; stroke-width: 1; }
   .grid.zero { stroke: #344256; }
@@ -147,5 +149,5 @@
   .handle.bypass { opacity: .3; }
   .bnum { fill: #0a0d12; font-size: 9px; font-weight: 700; text-anchor: middle; font-family: ui-monospace, monospace; }
   .xohandle { fill: var(--warn); stroke: #0a0d12; stroke-width: 1.5; cursor: ew-resize; }
-  .readout { padding: .25rem .2rem; font-size: .78rem; }
+  .readout { padding: 1rem; font-size: .78rem; }
 </style>

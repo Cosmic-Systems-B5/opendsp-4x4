@@ -85,7 +85,7 @@
     justify-content: center;
     gap: .25rem;
     background: var(--bg-elev);
-    padding: .25rem;
+    padding: .5rem;
     border-radius: var(--radius);
     margin-top: -1rem; /* Pull toggle up into padding area */
   }
