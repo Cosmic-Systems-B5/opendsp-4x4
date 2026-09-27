@@ -5,6 +5,7 @@
   import CrossoverBands from "./CrossoverBands.svelte";
   import EqGraph from "./EqGraph.svelte";
   import type { ChannelEq } from "../eq/types.ts";
+  import DelayPanel from "./DelayPanel.svelte";
 
   let { index, eq = $bindable() }: { index: number; eq: ChannelEq } = $props();
 
@@ -26,13 +27,15 @@
   <!-- PEQ mode: BandList + CrossoverBands side by side -->
   <div class="mode-content peq-mode" style:display={mode === "peq" ? "flex" : "none"}>
     <BandList index={index} />
-    <CrossoverBands index={index} />
+    <div class="eq-panel">
+      <CrossoverBands index={index} />
+      <DelayPanel index={index} />
+    </div>
   </div>
 
   <!-- GEQ mode: Full-width graph + HPF/LPF below -->
   <div class="mode-content geq-mode" style:display={mode === "geq" ? "flex" : "none"}>
-    <EqGraph bind:eq onCommit showReadout={false} />
-    <CrossoverBands index={index} />
+    <EqGraph bind:eq onCommit={onCommit} showReadout={false} />
   </div>
 
   <!-- Toggle button between PEQ and GEQ -->

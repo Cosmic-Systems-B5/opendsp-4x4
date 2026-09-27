@@ -73,34 +73,32 @@
         <button class="conn-btn" class:active={connectionType === "remote"} onclick={() => handleChangeConnectionType("remote")}>
           Remote
         </button>
+        {#if connectionType === "remote"}
+          <div class="remote-controls">
+            <input type="text" bind:value={remoteUrl} placeholder="ws://server:port" class="url-input" onblur={() => localStorage.setItem("opendsp-remote-url", remoteUrl.trim())} />
+<!--            <button class="device-btn" onclick={loadRemoteDevices} disabled={loadingDevices}>-->
+<!--              {#if loadingDevices}Loading...{:else}Select Device{/if}-->
+<!--            </button>-->
+            <!--{#if remoteDevices.length > 0}-->
+            <!--  <select class="device-select" bind:value={selectedDevicePath}>-->
+            <!--    <option value="">&#45;&#45; Select Device &#45;&#45;</option>-->
+            <!--    {#each remoteDevices as dev (dev.path)}-->
+            <!--      <option value={dev.path}>{dev.product} ({dev.vendorId}:{dev.productId})</option>-->
+            <!--    {/each}-->
+            <!--  </select>-->
+            <!--{/if}-->
+          </div>
+        {/if}
       {/if}
     </div>
-    {#if connectionType === "remote"}
-      <div class="remote-controls">
-        <input type="text" bind:value={remoteUrl} placeholder="ws://server:port" class="url-input"
-               onblur={() => localStorage.setItem("opendsp-remote-url", remoteUrl.trim())} />
-        <button class="device-btn" onclick={loadRemoteDevices} disabled={loadingDevices}>
-          {#if loadingDevices}Loading...{:else}Select Device{/if}
-        </button>
-        {#if remoteDevices.length > 0}
-          <select class="device-select" bind:value={selectedDevicePath}>
-            <option value="">-- Select Device --</option>
-            {#each remoteDevices as dev (dev.path)}
-              <option value={dev.path}>{dev.product} ({dev.vendorId}:{dev.productId})</option>
-            {/each}
-          </select>
-        {/if}
-      </div>
-    {/if}
-
     <div class="status-row">
-      <span class="dot" class:ok={device.connected}></span>
-      <span class="status" class:ok={device.connected}>{device.connected ? device.version || device.productName : device.error || "Not connected"}</span>
       {#if device.connected}
         <button class="primary" onclick={handleDisconnect}>Disconnect</button>
       {:else}
-        <button class="primary" onclick={handleConnect}>{connectionType === "remote" ? "Connect (Remote)" : "Connect DSP"}</button>
+        <button class="primary" onclick={handleConnect}>{connectionType === "remote" ? "Connect Remote DSP" : "Connect DSP"}</button>
       {/if}
+      <span class="dot" class:ok={device.connected}></span>
+      <span class="status" class:ok={device.connected}>{device.connected ? device.version || device.productName : device.error || "Not connected"}</span>
     </div>
   </div>
 </div>
@@ -128,7 +126,7 @@
   .device-select { padding: .35rem .7rem; border-radius: 6px; background: var(--bg-elev); color: var(--text);
                    border: 1px solid var(--line); font-size: .8rem; min-width: 200px; }
 
-  .status-row { display: flex; align-items: center; gap: .5rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+  .status-row { display: flex; align-items: center; gap: 1rem; padding-top: 1rem; border-top: 1px solid var(--line); }
   .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); box-shadow: 0 0 8px var(--bad); }
   .dot.ok { background: var(--good); box-shadow: 0 0 8px var(--good); }
   .status { font-size: .82rem; color: var(--text-dim); max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

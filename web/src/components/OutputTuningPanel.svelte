@@ -2,7 +2,6 @@
   // Single output tuning panel with all controls visible
   import { device } from "../state/device.svelte.ts";
   import ChannelHeader from "./ChannelHeader.svelte";
-  import DelayPanel from "./DelayPanel.svelte";
   import EqPanel from "./EqPanel.svelte";
   import type { ChannelEq } from "../eq/types.ts";
 
@@ -12,7 +11,6 @@
 <section class="output-panel" style="--c:var(--ch-{index})">
   <ChannelHeader index={index} />
   <EqPanel index={index} bind:eq />
-  <DelayPanel index={index} />
 </section>
 
 <style>

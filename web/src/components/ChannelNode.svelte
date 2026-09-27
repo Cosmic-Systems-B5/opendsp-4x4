@@ -7,7 +7,6 @@
   import ChannelHeader from "./ChannelHeader.svelte";
   import GatePanel from "./GatePanel.svelte";
   import EqPanel from "./EqPanel.svelte";
-  import CrossoverPanel from "./CrossoverPanel.svelte";
   import CompressorPanel from "./CompressorPanel.svelte";
   import DelayPanel from "./DelayPanel.svelte";
   import EqTools from "./EqTools.svelte";
@@ -26,7 +25,6 @@
     <ChannelHeader index={index} />
     {#if ch.isOutput && ch.eq}
       <EqPanel index={index} bind:eq={ch.eq} />
-      <CrossoverPanel index={index} />
       <details><summary>Compressor</summary><CompressorPanel index={index} /></details>
       <details><summary>Delay</summary><DelayPanel index={index} /></details>
       <details><summary>Copy / Link EQ</summary><EqTools index={index} /></details>

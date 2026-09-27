@@ -7,11 +7,10 @@
 </script>
 
 <div class="band" style="margin-top: .6rem;">
-  <button class="num" style="--c:var(--ch-6)" title="Delay">DLY</button>
-  <Param label="Delay" bind:value={ch.delayMs} min={0} max={680} step={1} unit="ms"
-         format={(v) => v.toFixed(2)} onchange={commit} dragSensitivity={360} />
+  <button class="num" style="--c:var(--ch-6)" title="Delay" disabled={(ch.delayMs ?? 0) === 0}>DLY</button>
+  <Param label="" bind:value={ch.delayMs} min={0} max={100} step={0.01} unit="ms" format={(v) => v.toFixed(2)} onchange={commit} dragSensitivity={3000} />
   <div class="readout muted mono">
-    {((ch.delayMs ?? 0) * 48).toFixed(0)} samples @ 48 kHz · {(((ch.delayMs ?? 0) / 1000) * 343).toFixed(2)} m
+    {((ch.delayMs ?? 0) * 48).toFixed(0)} samples
   </div>
 </div>
 

@@ -1,14 +1,14 @@
 <script lang="ts">
-  import PresetPads from "./PresetPads.svelte";
-  import SystemPanel from "./SystemPanel.svelte";
+  import PresetPanel from "./PresetPads.svelte";
+  import ConnectionPanel from "./ConnectionPanel.svelte";
   import TonePanel from "./TonePanel.svelte";
   import LockPanel from "./LockPanel.svelte";
   import DefaultsPanel from "./DefaultsPanel.svelte";
 </script>
 
 <div class="system-view">
-  <SystemPanel />
-  <PresetPads />
+  <ConnectionPanel />
+  <PresetPanel />
   <TonePanel />
   <LockPanel />
   <DefaultsPanel />
