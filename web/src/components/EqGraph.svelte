@@ -5,9 +5,11 @@
   import { PeqType } from "../protocol/commands.ts";
   import { DEFAULT_BAND_FREQS } from "../state/model.ts";
 
-  let { eq = $bindable(), onCommit = () => {} }: {
+  let { eq = $bindable(), onCommit = () => {}, showReadout = true, eqMode = "peq" }: {
     eq: ChannelEq;
     onCommit?: (kind: "band" | "hpf" | "lpf", index?: number) => void;
+    showReadout?: boolean;
+    eqMode?: "peq" | "geq";
   } = $props();
 
   const W = 760, H = 290, DB = 18;

@@ -19,6 +19,7 @@ export interface Channel {
   delayMs?: number;   // outputs
   comp?: Compressor;  // outputs
   gate?: Gate;        // inputs
+  eqMode?: "peq" | "geq"; // EQ display mode: PEQ controls or GEQ graph
 }
 
 export interface PresetSlot { slot: number; name: string; }
@@ -50,6 +51,7 @@ export function defaultChannel(index: number): Channel {
     delayMs: isOutput ? 0 : undefined,
     comp: isOutput ? { thresholdDb: 20, ratioIndex: 0, kneeDb: 0, attackMs: 50, releaseMs: 500 } : undefined,
     gate: isOutput ? undefined : { thresholdDb: -90, attackMs: 50, holdMs: 100, releaseMs: 500 },
+    eqMode: isOutput ? "peq" : undefined,
   };
 }
 export function makeChannels(): Channel[] {

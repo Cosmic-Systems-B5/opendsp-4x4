@@ -173,6 +173,7 @@ export class DeviceStore {
   setGainDb(i: number, db: number): void { this.ch(i).gainDb = db; this.commit(`gain${i}`, () => this.dsp!.setLevelDb(i, db)); }
   setMute(i: number, on: boolean): void { this.ch(i).mute = on; this.commit(`mute${i}`, () => this.dsp!.mute(i, on), 0); }
   setPolarity(i: number, inv: boolean): void { this.ch(i).polarity = inv; this.commit(`pol${i}`, () => this.dsp!.setPolarity(i, inv), 0); }
+  toggleEqMode(i: number): void { const ch = this.ch(i); if (ch.eq) ch.eqMode = ch.eqMode === "geq" ? "peq" : "geq"; }
 
   // --- EQ (commit reads the already-mutated band; UI mutates eq directly for instant draw) ---
   commitPeqBand(i: number, band: number): void {

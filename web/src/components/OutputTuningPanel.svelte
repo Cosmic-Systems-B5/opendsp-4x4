@@ -6,11 +6,12 @@
   import type { ChannelEq } from "../eq/types.ts";
 
   let { index, eq = $bindable() }: { index: number; eq: ChannelEq } = $props();
+  const ch = $derived(device.ch(index));
 </script>
 
 <section class="output-panel" style="--c:var(--ch-{index})">
   <ChannelHeader index={index} />
-  <EqPanel index={index} bind:eq />
+  <EqPanel index={index} bind:eq mode={ch.eqMode ?? "peq"} />
 </section>
 
 <style>
