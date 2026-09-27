@@ -1,8 +1,9 @@
 <script lang="ts">
   // Compact drag-to-adjust numeric control (vertical drag). Two-way via bind:value.
-  let { label, value = $bindable(), min, max, step = 1, unit = "", log = false, format, reset, onchange }: {
+  let { label, value = $bindable(), min, max, step = 1, unit = "", log = false, format, reset, onchange, dragSensitivity = 180 }: {
     label: string; value: number; min: number; max: number;
     step?: number; unit?: string; log?: boolean; format?: (v: number) => string; reset?: number; onchange?: () => void;
+    dragSensitivity?: number;
   } = $props();
 
   let startY = 0, startV = 0, dragging = $state(false);
@@ -31,7 +32,7 @@
   }
   function move(e: PointerEvent) {
     if (!dragging) return;
-    const f = -(e.clientY - startY) / 180; // fraction of full range per 180px
+    const f = -(e.clientY - startY) / dragSensitivity; // fraction of full range per dragSensitivity pixels
     if (log) value = clamp(startV * Math.pow(max / min, f));
     else value = clamp(Math.round((startV + f * (max - min)) / step) * step);
     onchange?.();
@@ -63,7 +64,7 @@
   .dial { position: relative; height: 64px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-elev);
           overflow: hidden; cursor: ns-resize; display: grid; place-items: center; touch-action: none; }
   .param.dragging .dial { border-color: var(--accent); box-shadow: var(--glow); }
-  .fill { position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(180deg, transparent, color-mix(in oklab, var(--accent) 30%, transparent)); pointer-events: none; }
+  .fill { position: absolute; bottom: 0; left: 0; right: 0; background: color-mix(in oklab, var(--accent) 25%, transparent); pointer-events: none; }
   .val { position: relative; font-size: .85rem; font-weight: 600; }
   .u { font-size: .65rem; color: var(--text-dim); margin-left: 1px; }
   .edit { width: 100%; height: 100%; border: 0; background: transparent; color: inherit;

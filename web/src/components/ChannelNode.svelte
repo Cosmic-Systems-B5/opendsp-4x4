@@ -6,9 +6,8 @@
   import Meter from "./Meter.svelte";
   import ChannelHeader from "./ChannelHeader.svelte";
   import GatePanel from "./GatePanel.svelte";
-  import EqGraph from "./EqGraph.svelte";
+  import EqPanel from "./EqPanel.svelte";
   import CrossoverPanel from "./CrossoverPanel.svelte";
-  import BandList from "./BandList.svelte";
   import CompressorPanel from "./CompressorPanel.svelte";
   import DelayPanel from "./DelayPanel.svelte";
   import EqTools from "./EqTools.svelte";
@@ -17,12 +16,6 @@
   const ch = $derived(device.ch(index));
   const open = $derived(device.selected === index);
   const wire = $derived(ch.isOutput ? `out-${index - OUT_BASE}` : `in-${index}`);
-
-  function onEqCommit(kind: "band" | "hpf" | "lpf", band?: number) {
-    if (kind === "band" && band != null) device.commitPeqBand(index, band);
-    else if (kind === "hpf") device.commitHpf(index);
-    else device.commitLpf(index);
-  }
 </script>
 
 <section class="node" class:open data-wire={wire} style="--c:var(--ch-{index})">
@@ -32,9 +25,8 @@
     </button>
     <ChannelHeader index={index} />
     {#if ch.isOutput && ch.eq}
-      <EqGraph bind:eq={ch.eq} onCommit={onEqCommit} />
+      <EqPanel index={index} bind:eq={ch.eq} />
       <CrossoverPanel index={index} />
-      <details><summary>PEQ bands</summary><BandList index={index} /></details>
       <details><summary>Compressor</summary><CompressorPanel index={index} /></details>
       <details><summary>Delay</summary><DelayPanel index={index} /></details>
       <details><summary>Copy / Link EQ</summary><EqTools index={index} /></details>

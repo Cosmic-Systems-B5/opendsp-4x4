@@ -5,9 +5,10 @@
   import { PeqType } from "../protocol/commands.ts";
   import { DEFAULT_BAND_FREQS } from "../state/model.ts";
 
-  let { eq = $bindable(), onCommit }: {
+  let { eq = $bindable(), onCommit, showReadout = true }: {
     eq: ChannelEq;
     onCommit?: (kind: "band" | "hpf" | "lpf", index?: number) => void;
+    showReadout?: boolean;
   } = $props();
 
   const W = 760, H = 290, DB = 18;
@@ -45,6 +46,8 @@
     e.preventDefault();
     if (kind === "band") activeBand = i;
     drag = { kind, i };
+    // Capture on the SVG element to ensure we get pointerup
+    svgEl.setPointerCapture(e.pointerId);
   }
   function onMove(e: PointerEvent) {
     if (!drag) return;
@@ -75,7 +78,14 @@
   $effect(() => {
     if (!drag) return;
     const mv = (e: PointerEvent) => onMove(e);
-    const up = () => { if (drag) { onCommit?.(drag.kind, drag.kind === "band" ? drag.i : undefined); drag = null; } };
+    const up = (e: PointerEvent) => {
+      if (drag) {
+        svgEl.releasePointerCapture(e.pointerId);
+        onCommit?.(drag.kind, drag.kind === "band" ? drag.i : undefined);
+        drag = null;
+        activeBand = null;
+      }
+    };
     window.addEventListener("pointermove", mv);
     window.addEventListener("pointerup", up);
     return () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); };
@@ -126,7 +136,7 @@
   {/if}
 </svg>
 
-<div class="readout mono">
+<div class="readout mono" style:display={showReadout ? undefined : "none"}>
   {#if active}
     Band {activeBand! + 1} · {TYPE_NAME[active.type]} · {active.freqHz < 1000 ? active.freqHz.toFixed(0) + " Hz" : (active.freqHz / 1000).toFixed(2) + " kHz"}
     · {active.gainDb >= 0 ? "+" : ""}{active.gainDb.toFixed(1)} dB · {active.bwOct.toFixed(2)} oct {active.bypass ? "· (bypassed)" : ""}

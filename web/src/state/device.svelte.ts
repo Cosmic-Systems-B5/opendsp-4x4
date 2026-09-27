@@ -3,6 +3,7 @@
 // are converted to wire values via the Calibration seam.
 import { WebHidTransport } from "../transport/webhid.ts";
 import { NativeTransport } from "../transport/native.ts";
+import { WebSocketTransport } from "../transport/websocket.ts";
 import { Dsp } from "../dsp.ts";
 import { defaultCalibration, type Calibration } from "../eq/calibration.ts";
 import { getLevelsFrame, gainRawToDb } from "../protocol/control.ts";
@@ -39,15 +40,33 @@ export class DeviceStore {
   collapse(): void { this.selected = -1; }
 
   /** Connect via the device picker (needs a user gesture). On Android the native
-   *  bridge replaces the picker — open() raises the system USB-permission dialog. */
-  async connect(): Promise<void> {
-    try { await this._bind(NativeTransport.supported() ? new NativeTransport() : await WebHidTransport.request()); }
-    catch (e) { this.error = (e as Error).message; }
+   *  bridge replaces the picker — open() raises the system USB-permission dialog.
+   *  If url is provided, connects to a remote DSP via WebSocket instead. */
+  async connect(url?: string): Promise<void> {
+    try {
+      let t: WebHidTransport | NativeTransport | WebSocketTransport | null = null;
+      if (url) {
+        if (!WebSocketTransport.supported())
+          throw new Error("WebSocket unavailable");
+        t = new WebSocketTransport(url);
+      } else if (NativeTransport.supported()) {
+        t = new NativeTransport();
+      } else {
+        t = await WebHidTransport.request();
+      }
+      await this._bind(t);
+    } catch (e) { this.error = (e as Error).message; }
   }
 
   /** Reconnect to an already-granted device without prompting (call on page load). */
-  async autoConnect(): Promise<void> {
+  async autoConnect(url?: string): Promise<void> {
     try {
+      if (url) {
+        // Remote connection mode
+        if (!WebSocketTransport.supported()) throw new Error("WebSocket unavailable");
+        await this._bind(new WebSocketTransport(url));
+        return;
+      }
       if (NativeTransport.supported()) {
         if (NativeTransport.connected()) await this._bind(new NativeTransport()); // attach intent pre-grants permission
         return;
@@ -56,7 +75,7 @@ export class DeviceStore {
     } catch (e) { this.error = (e as Error).message; }
   }
 
-  private async _bind(t: WebHidTransport | NativeTransport | null): Promise<void> {
+  private async _bind(t: WebHidTransport | NativeTransport | WebSocketTransport | null): Promise<void> {
     if (!t) return;
     await t.open();
     this.dsp = new Dsp(t);

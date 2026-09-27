@@ -25,5 +25,5 @@
   .db { width: 6ch; flex-shrink: 0; text-align: right; font-size: .8rem; }
   .tgl { flex-shrink: 0; }
   .tgl.on { background: var(--warn); color: #1a1205; border-color: var(--warn); }
-  .meter { width: 64px; flex-shrink: 0; }
+  .meter { width: 192px; flex-shrink: 0; }
 </style>
