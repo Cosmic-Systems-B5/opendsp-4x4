@@ -206,7 +206,12 @@ export class DeviceStore {
         // Sync routing for outputs
         const outIndex = i - OUT_BASE;
         if (outIndex >= 0 && outIndex < this.routing.length) {
-          deviceManager.broadcastRoutingUpdate(i, this.routing[outIndex]);
+          const thisRouting = this.routing[outIndex];
+          if (thisRouting) {
+            deviceManager.broadcastRoutingUpdate(i, thisRouting);
+          } else {
+            console.warn(`Routing ${i} not found.`);
+          }
         }
 
         // Sync EQ bands
