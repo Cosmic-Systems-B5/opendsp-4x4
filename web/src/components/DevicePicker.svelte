@@ -33,8 +33,12 @@
           const msg = JSON.parse(event.data);
           if (msg.type === 'report') {
             const data = JSON.parse(atob(msg.data));
-            if (data.devices) {
-              remoteDevices = data.devices;
+            if (data.devices !== undefined) {
+              remoteDevices = data.devices || [];
+            }
+            // Show error message for no devices
+            if (data.error === 'no_device' && !data.devices?.length) {
+              console.log('Remote DSP: No devices connected to server');
             }
           }
         } catch (e) {

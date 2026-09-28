@@ -33,13 +33,11 @@ async function connectHid() {
   try {
     if (!NodeHid) throw new Error('node-hid not available');
 
-    const devices = NodeHid.devices({
-      vendorId: VENDOR_ID,
-      productId: PRODUCT_ID
-    });
+    // node-hid.devices() expects vendorId and productId as separate arguments, not an object
+    const devices = NodeHid.devices(VENDOR_ID, PRODUCT_ID);
 
     if (devices.length === 0) {
-      throw new Error(`DSP device not found. Vendor: 0x${VENDOR_ID.toString(16)}, Product: 0x${PRODUCT_ID.toString(16)}`);
+      return; // No device found - server will just wait for one
     }
 
     const dev = devices[0];
@@ -167,7 +165,17 @@ const httpServer = createServer((req, res) => {
     }));
   } else if (req.url === '/devices' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    const localDevices = NodeHid ? NodeHid.devices({ vendorId: VENDOR_ID, productId: PRODUCT_ID }) : [];
+    // node-hid.devices() expects vendorId and productId as separate arguments
+    const localDevices = NodeHid ? NodeHid.devices(VENDOR_ID, PRODUCT_ID) : [];
+
+    if (localDevices.length === 0) {
+      res.end(JSON.stringify({
+        devices: [],
+        message: 'No DSP devices found. Connect a device via USB.',
+        error: 'no_device'
+      }));
+      return;
+    }
 
     // Map HID path to master/slave role
     const getRoleForPath = (path) => {

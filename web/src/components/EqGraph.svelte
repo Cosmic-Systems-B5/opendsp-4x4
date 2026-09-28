@@ -162,5 +162,5 @@
   .handle.bypass { opacity: .3; }
   .bnum { fill: #0a0d12; font-size: 9px; font-weight: 700; text-anchor: middle; font-family: ui-monospace, monospace; }
   .xohandle { fill: var(--warn); stroke: #0a0d12; stroke-width: 1.5; cursor: ew-resize; }
-  .readout { padding: 1rem; font-size: .78rem; }
+  .readout { width: 33%; padding: 1rem; font-size: .78rem; }
 </style>
