@@ -5,11 +5,12 @@
   import { PeqType } from "../protocol/commands.ts";
   import { DEFAULT_BAND_FREQS } from "../state/model.ts";
 
-  let { eq = $bindable(), onCommit = () => {}, showReadout = true, eqMode = "peq" }: {
+  let { eq = $bindable(), onCommit = () => {}, showReadout = true, eqMode = "peq", extraEqs = [] }: {
     eq: ChannelEq;
     onCommit?: (kind: "band" | "hpf" | "lpf", index?: number) => void;
     showReadout?: boolean;
     eqMode?: "peq" | "geq";
+    extraEqs?: { eq: ChannelEq; color: string }[];
   } = $props();
 
   const W = 760, H = 290, DB = 18;
@@ -103,10 +104,19 @@
   {#if eq.hpf.slope !== 0}<line class="xo" x1={hpfX} y1="0" x2={hpfX} y2={H} />{/if}
   {#if eq.lpf.slope !== 0}<line class="xo" x1={lpfX} y1="0" x2={lpfX} y2={H} />{/if}
 
-  <!-- summed response -->
+  <!-- extra EQ curves (read-only, display only) -->
+  {#each extraEqs as extra (extra.eq)}
+    <path
+      class="sum sum-extra"
+      d={toPath(freqs, summedResponseDb(extra.eq, freqs))}
+      style="--c:{extra.color}"
+    />
+  {/each}
+
+  <!-- primary summed response -->
   <path class="sum" d={sumPath} />
 
-  <!-- band handles -->
+  <!-- band handles (primary only) -->
   {#each handles as h (h.i)}
     <circle
       class="handle" class:active={activeBand === h.i} class:bypass={h.b.bypass}
@@ -146,6 +156,7 @@
   .xo { stroke: var(--warn); stroke-dasharray: 3 4; opacity: .5; }
   .lab { fill: var(--text-dim); font-size: 11px; font-family: ui-monospace, monospace; }
   .sum { fill: none; stroke: var(--accent); stroke-width: 2.5; filter: drop-shadow(0 0 6px rgba(56,189,248,.5)); }
+  .sum-extra { opacity: .35; stroke-width: 1.5; stroke: var(--c); filter: none; }
   .handle { fill: var(--c); stroke: #0a0d12; stroke-width: 2; cursor: grab; transition: r .1s; }
   .handle.active { stroke: #fff; filter: drop-shadow(0 0 6px var(--c)); }
   .handle.bypass { opacity: .3; }

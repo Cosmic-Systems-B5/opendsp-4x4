@@ -10,7 +10,11 @@
 
 <div class="tuning-view">
   {#each OUT_indices as outIndex (outIndex)}
-    <OutputTuningPanel index={outIndex} eq={device.ch(outIndex).eq!} />
+    <OutputTuningPanel
+      index={outIndex}
+      eq={device.ch(outIndex).eq!}
+      allEqs={OUT_indices.map(i => ({ ch: device.ch(i), color: `var(--ch-${i})` }))}
+    />
   {/each}
 </div>
 
