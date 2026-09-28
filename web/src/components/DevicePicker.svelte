@@ -1,6 +1,6 @@
 <script lang="ts">
   import { device, deviceManager } from "../state/device.svelte.ts";
-  import { WebHidTransport, VENDOR_ID, PRODUCT_ID } from "../transport/webhid.ts";
+  import { WebHidTransport } from "../transport/webhid.ts";
 
   let selectedTab = $state<"usb" | "remote">("usb");
   let localDevices = $state<HIDDevice[]>([]);

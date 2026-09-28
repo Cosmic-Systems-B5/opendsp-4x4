@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { device, deviceManager } from "../state/device.svelte.ts";
+  import { deviceManager } from "../state/device.svelte.ts";
   import DevicePicker from "./DevicePicker.svelte";
 
   let showPicker = $state(false);
