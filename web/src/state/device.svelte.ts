@@ -325,7 +325,14 @@ export class DeviceStore {
   setRouting(outIndex: number, mask: number): void { this.routing[outIndex - 0x04] = mask; this.commit(`route${outIndex}`, () => this.dsp!.routing(outIndex, mask), 0); }
 
   // --- global ---
-  recallPreset(slot: number): void { if (this.dsp) { this.activePreset = slot; void this.dsp.recallPreset(slot); } }
+  async recallPreset(slot: number): Promise<void> {
+    if (this.dsp) {
+      this.activePreset = slot;
+      await this.dsp.recallPreset(slot);
+      // Re-read all channel states after recall
+      try { await this.hydrate(); } catch { /* ignore errors */ }
+    }
+  }
   storePreset(slot: number): void { if (this.dsp) void this.dsp.storePreset(slot); }
   testTone(source: number, freqIndex = 0): void { if (this.dsp) void this.dsp.testTone(source, freqIndex); }
   setPassword(pw: string): void { if (this.dsp) void this.dsp.setPassword(pw); }
