@@ -1,5 +1,5 @@
 <script lang="ts">
-  import ConnectionPanel from "./ConnectionPanel.svelte";
+  import DevicePicker from "./DevicePicker.svelte";
   import DeviceTable from "./DeviceTable.svelte";
   import PresetPanel from "./PresetPads.svelte";
   import TonePanel from "./TonePanel.svelte";
@@ -8,7 +8,7 @@
 </script>
 
 <div class="system-view">
-  <ConnectionPanel />
+  <DevicePicker />
   <DeviceTable />
   <PresetPanel />
   <TonePanel />

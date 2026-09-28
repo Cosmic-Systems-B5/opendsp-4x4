@@ -181,7 +181,7 @@
 </div>
 
 <style>
-  .device-picker { width: 100%; max-width: 700px; margin: 0 auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-panel); overflow: hidden; }
+  .device-picker { width: 100%; max-width: 900px; margin: 0 auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-panel); overflow: hidden; }
   .tabs { display: flex; border-bottom: 1px solid var(--line); background: var(--bg-elev); }
   .tab-btn { padding: .6rem 1.2rem; border: none; border-radius: 0; background: transparent; color: var(--text-dim);
              font-size: .85rem; cursor: pointer; transition: all .15s; flex: 1; }

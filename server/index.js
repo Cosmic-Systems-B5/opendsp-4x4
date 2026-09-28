@@ -136,9 +136,9 @@ function unregisterClient(ws) {
       // Reassign master role if needed
       if (clients.size > 0 && !Array.from(connectedDevices.values()).find(d => d.role === 'master')) {
         const firstClient = Array.from(clients)[0];
-        for (const [deviceInfo] of connectedDevices.entries()) {
-          if (deviceInfo.ws === firstClient) {
-            deviceInfo.role = 'master';
+        for (const [dinfo] of connectedDevices.entries()) {
+          if (dinfo.ws === firstClient) {
+            dinfo.role = 'master';
             break;
           }
         }
