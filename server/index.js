@@ -151,7 +151,7 @@ function unregisterClient(ws) {
 /**
  * Send a message to a specific client
  */
-function sendToClient(ws: WebSocket, msg: object) {
+function sendToClient(ws, msg) {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg));
   }
