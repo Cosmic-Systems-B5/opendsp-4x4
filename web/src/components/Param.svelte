@@ -23,7 +23,7 @@
     if (e.key === "Enter") commitEdit();
     else if (e.key === "Escape") editing = false;
   }
-  function focusSelect(node: HTMLInputElement) { node.focus(); node.select(); }
+  function focusSelect(node: HTMLInputElement) { node.focus(); }
 
   function down(e: PointerEvent) {
     if (editing) return;
@@ -65,10 +65,10 @@
           overflow: hidden; cursor: ns-resize; display: grid; place-items: center; touch-action: none; }
   .param.dragging .dial { border-color: var(--accent); box-shadow: var(--glow); }
   .fill { position: absolute; bottom: 0; left: 0; right: 0; background: color-mix(in oklab, var(--accent) 25%, transparent); pointer-events: none; }
-  .val { position: relative; font-size: .85rem; font-weight: 600; }
-  .u { font-size: .65rem; color: var(--text-dim); margin-left: 1px; }
+  .val { position: relative; font-size: .85rem; font-weight: 600; user-select: none; -webkit-user-select: none; }
+  .u { font-size: .65rem; color: var(--text-dim); margin-left: 1px; user-select: none; -webkit-user-select: none; }
   .edit { width: 100%; height: 100%; border: 0; background: transparent; color: inherit;
           text-align: center; font-size: .85rem; font-weight: 600; outline: none;
-          appearance: textfield; -moz-appearance: textfield; }
+          appearance: textfield; -moz-appearance: textfield; user-select: text; -webkit-user-select: text; }
   .edit::-webkit-outer-spin-button, .edit::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 </style>

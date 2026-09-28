@@ -1,6 +1,7 @@
 <script lang="ts">
-  import PresetPanel from "./PresetPads.svelte";
   import ConnectionPanel from "./ConnectionPanel.svelte";
+  import DeviceTable from "./DeviceTable.svelte";
+  import PresetPanel from "./PresetPads.svelte";
   import TonePanel from "./TonePanel.svelte";
   import LockPanel from "./LockPanel.svelte";
   import DefaultsPanel from "./DefaultsPanel.svelte";
@@ -8,6 +9,7 @@
 
 <div class="system-view">
   <ConnectionPanel />
+  <DeviceTable />
   <PresetPanel />
   <TonePanel />
   <LockPanel />

@@ -22,11 +22,12 @@
   .glabel { font-size: .72rem; color: var(--text-dim); flex-shrink: 0; }
   .fader { flex: 1 1 auto; min-width: 60px; max-width: 240px; display: flex; align-items: center; gap: .5rem; }
   .fader input { flex: 1; min-width: 0; accent-color: var(--c); }
-  .db { width: 7ch; flex-shrink: 0; text-align: right; font-size: .8rem; }
+  .db { width: 9ch; flex-shrink: 0; text-align: left; font-size: .8rem; }
   .tgl { flex-shrink: 0; }
   .tgl.on { background: var(--warn); color: #1a1205; border-color: var(--warn); }
   .mode-toggle { flex-shrink: 0; padding: .7rem .5rem; border-radius: 9px; font-size: .6rem; font-family: ui-monospace, monospace; }
   .mode-toggle.peq { border-color: #4ade80; } /* green for PEQ */
   .mode-toggle.geq { border-color: var(--accent); } /* blue/cyan for GEQ */
-  .meter { width: 192px; flex-shrink: 0; }
+  .meter { flex: 1; text-align: right; }
+  .meter .meter { width: auto; display: inline-block; }
 </style>

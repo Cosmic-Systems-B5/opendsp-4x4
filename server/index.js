@@ -108,6 +108,55 @@ function sendToHid(bytes) {
   }
 }
 
+// Track connected devices with roles for multi-DSP support
+const connectedDevices = new Map();
+
+/**
+ * Register a client as a DSP connection
+ */
+function registerClient(ws, path) {
+  const id = `client-${clients.size}`;
+  const isMaster = clients.size === 0 && hidDevice?.path === path;
+  connectedDevices.set(id, {
+    id,
+    ws,
+    path,
+    role: isMaster ? 'master' : 'slave',
+    connectedAt: new Date().toISOString()
+  });
+}
+
+/**
+ * Unregister a client
+ */
+function unregisterClient(ws) {
+  for (const [id, info] of connectedDevices.entries()) {
+    if (info.ws === ws) {
+      connectedDevices.delete(id);
+      // Reassign master role if needed
+      if (clients.size > 0 && !Array.from(connectedDevices.values()).find(d => d.role === 'master')) {
+        const firstClient = Array.from(clients)[0];
+        for (const [did, dinfo] of connectedDevices.entries()) {
+          if (dinfo.ws === firstClient) {
+            dinfo.role = 'master';
+            break;
+          }
+        }
+      }
+      break;
+    }
+  }
+}
+
+/**
+ * Send a message to a specific client
+ */
+function sendToClient(ws: WebSocket, msg: object) {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(msg));
+  }
+}
+
 // HTTP server for serving static files (optional)
 const httpServer = createServer((req, res) => {
   if (req.url === '/status') {
@@ -118,16 +167,37 @@ const httpServer = createServer((req, res) => {
     }));
   } else if (req.url === '/devices' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    const devices = NodeHid ? NodeHid.devices({ vendorId: VENDOR_ID, productId: PRODUCT_ID }) : [];
+    const localDevices = NodeHid ? NodeHid.devices({ vendorId: VENDOR_ID, productId: PRODUCT_ID }) : [];
+
+    // Map HID path to master/slave role
+    const getRoleForPath = (path) => {
+      if (!hidDevice || hidDevice.path !== path) return 'available';
+      for (const info of connectedDevices.values()) {
+        if (info.path === path && info.role === 'master') return 'master';
+      }
+      return 'slave';
+    };
+
     res.end(JSON.stringify({
-      devices: devices.map(d => ({
+      devices: localDevices.map(d => ({
         path: d.path,
         vendorId: d.vendorId.toString(16),
         productId: d.productId.toString(16),
         product: d.product || 'Unknown',
-        serialNumber: d.serialNumber || ''
+        serialNumber: d.serialNumber || '',
+        role: getRoleForPath(d.path)
       })),
       connectedPath: hidDevice ? hidDevice.path : null
+    }));
+  } else if (req.url === '/connections' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      connections: Array.from(connectedDevices.values()).map(d => ({
+        id: d.id,
+        path: d.path,
+        role: d.role,
+        connectedAt: d.connectedAt
+      }))
     }));
   } else if (req.url === '/' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -135,6 +205,7 @@ const httpServer = createServer((req, res) => {
 <html><head><title>openDSP-4x4 Bridge</title></head>
 <body><h1>openDSP-4x4 WebSocket Bridge</h1>
 <p>Status: ${hidDevice ? '<span style="color:green">Connected to DSP</span>' : '<span style="color:red">Not Connected</span>'}</p>
+<p>Active connections: ${clients.size} (${Array.from(connectedDevices.values()).filter(d => d.role === 'master').length} master)</p>
 <ul>
 <li>Connect web UI to <code>wss://${req.headers.host || 'localhost:8765'}</code></li>
 <li>HID device vendor: 0x${VENDOR_ID.toString(16).padStart(4, '0')}</li>
@@ -170,7 +241,47 @@ wss.on('connection', (ws) => {
         msg = JSON.parse(text);
       }
 
-      if (msg && msg.type === 'request' && msg.data) {
+      if (!msg) return;
+
+      // Handle list_devices action via WebSocket
+      if (msg.type === 'request' && msg.data) {
+        // Check if this is a special action message (base64-encoded JSON with action)
+        try {
+          const bytesStr = atob(msg.data);
+          const decoded = JSON.parse(bytesStr);
+
+          if (decoded.action === 'list_devices') {
+            const localDevices = NodeHid ? NodeHid.devices({ vendorId: VENDOR_ID, productId: PRODUCT_ID }) : [];
+
+            // Map HID path to master/slave role
+            const getRoleForPath = (path) => {
+              if (!hidDevice || hidDevice.path !== path) return 'available';
+              for (const info of connectedDevices.values()) {
+                if (info.path === path && info.role === 'master') return 'master';
+              }
+              return 'slave';
+            };
+
+            const responseMsg = {
+              type: 'report',
+              data: btoa(JSON.stringify({
+                devices: localDevices.map(d => ({
+                  path: d.path,
+                  vendorId: d.vendorId.toString(16),
+                  productId: d.productId.toString(16),
+                  product: d.product || 'Unknown',
+                  serialNumber: d.serialNumber || '',
+                  role: getRoleForPath(d.path)
+                }))
+              }))
+            };
+            sendToClient(ws, responseMsg);
+            return;
+          }
+        } catch (e) {
+          // Not an action message, continue to HID proxy
+        }
+
         // Decode base64 and send to HID device
         const bytesStr = atob(msg.data);
         const bytes = Array.from(bytesStr).map(c => c.charCodeAt(0));
@@ -186,6 +297,7 @@ wss.on('connection', (ws) => {
   ws.on('close', () => {
     console.log('Client disconnected');
     clients.delete(ws);
+    unregisterClient(ws);
 
     // If no more clients, disconnect HID
     if (clients.size === 0) {

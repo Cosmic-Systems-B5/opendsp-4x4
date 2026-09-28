@@ -11,8 +11,11 @@ import { thresholdRawToDb, samplesToMs, rawToQ, peqIndexToHz } from "../protocol
 import { levelsFromReply, reconstructPresetImage, parsePresetImage } from "../protocol/readback.ts";
 import { makeChannels, OUT_BASE, DEFAULT_BAND_FREQS, type Channel } from "./model.ts";
 import type { ChannelEq } from "../eq/types.ts";
+import { deviceManager } from "./device-manager.ts";
 
 const DEFAULTS_KEY = "opendsp-defaults";
+
+export type DeviceRole = 'master' | 'slave';
 
 export class DeviceStore {
   connected = $state(false);
@@ -26,6 +29,7 @@ export class DeviceStore {
   routing = $state<number[]>([0x01, 0x02, 0x04, 0x08]); // Out1..4 input masks (default diagonal)
   selected = $state(-1); // selected channel index; -1 = nothing open (collapsed overview on load)
   eqLink = $state<Record<number, number>>({}); // output index -> linked partner (symmetric); EQ edits mirror
+  role: DeviceRole = 'master'; // set by DeviceManager when multi-device is active
 
   private dsp: Dsp | null = null;
   private cal: Calibration = defaultCalibration;
@@ -85,6 +89,15 @@ export class DeviceStore {
     this.error = "";
     try { await this.hydrate(); } catch { /* readback is best-effort; UI keeps defaults */ }
     this.startMeters();
+
+    // Register with DeviceManager
+    const transportType: 'usb' | 'websocket' = t instanceof WebSocketTransport ? 'websocket' : 'usb';
+    deviceManager.connect(this, transportType, {
+      path: (t as WebHidTransport | NativeTransport).productName.includes('path')
+        ? undefined : undefined,
+      url: transportType === 'websocket' ? t.productName : undefined,
+      productName: this.productName
+    });
   }
 
   /** Read the 9 channel-state pages on connect → mirror preset name, channel names, gains. */
@@ -165,8 +178,76 @@ export class DeviceStore {
     if (prev) clearTimeout(prev);
     this.timers.set(key, setTimeout(() => {
       this.timers.delete(key);
-      if (this.dsp) void Promise.resolve().then(fn).catch(() => {});
+      if (this.dsp) void Promise.resolve().then(fn).catch(() => {}).finally(() => {
+        // Broadcast changes to slaves after successful commit
+        this.broadcastToSlaves();
+      });
     }, delay));
+  }
+
+  /** Broadcast channel updates to all slave devices */
+  private broadcastToSlaves(): void {
+    if (this.role === 'slave') return; // Slaves don't broadcast
+
+    for (let i = 0; i < this.channels.length; i++) {
+      const ch = this.ch(i);
+      deviceManager.broadcastChannelUpdate(i, {
+        gainDb: ch.gainDb,
+        mute: ch.mute,
+        polarity: ch.polarity
+      });
+
+      if (ch.isOutput) {
+        // Sync routing for outputs
+        const outIndex = i - OUT_BASE;
+        if (outIndex >= 0 && outIndex < this.routing.length) {
+          deviceManager.broadcastRoutingUpdate(i, this.routing[outIndex]);
+        }
+
+        // Sync EQ bands
+        if (ch.eq?.bands) {
+          ch.eq.bands.forEach((band, bandIdx) => {
+            deviceManager.broadcastEqBandUpdate(i, bandIdx, {
+              freqHz: band.freqHz,
+              gainDb: band.gainDb,
+              bwOct: band.bwOct,
+              type: band.type
+            });
+          });
+        }
+
+        // Sync crossover
+        if (ch.eq?.hpf) {
+          deviceManager.broadcastEqCrossoverUpdate(i, 'hpf', { freqHz: ch.eq.hpf.freqHz, slope: ch.eq.hpf.slope });
+        }
+        if (ch.eq?.lpf) {
+          deviceManager.broadcastEqCrossoverUpdate(i, 'lpf', { freqHz: ch.eq.lpf.freqHz, slope: ch.eq.lpf.slope });
+        }
+
+        // Sync delay
+        deviceManager.broadcastChannelUpdate(i, { delayMs: ch.delayMs });
+
+        // Sync compressor
+        if (ch.comp) {
+          deviceManager.broadcastChannelUpdate(i, { comp: structuredClone(ch.comp) });
+        }
+      } else {
+        // Sync gate for inputs
+        if (ch.gate) {
+          deviceManager.broadcastChannelUpdate(i, { gate: structuredClone(ch.gate) });
+        }
+      }
+    }
+
+    // Sync EQ links
+    const linkKeys = Object.keys(this.eqLink);
+    if (linkKeys.length > 0) {
+      linkKeys.forEach(key => {
+        const a = parseInt(key);
+        const b = this.eqLink[a];
+        if (b !== undefined) deviceManager.broadcastEqLinkUpdate(a, b);
+      });
+    }
   }
 
   // --- channel basics ---
@@ -217,11 +298,14 @@ export class DeviceStore {
   linkEq(a: number, b: number): void {
     this.eqLink = { ...this.eqLink, [a]: b, [b]: a };
     this.copyEqTo(a, b);
+    deviceManager.broadcastEqLinkUpdate(a, b);
   }
   unlinkEq(a: number): void {
     const b = this.eqLink[a]; const next = { ...this.eqLink };
     delete next[a]; if (b !== undefined) delete next[b];
     this.eqLink = next;
+    // Broadcast removal of EQ link
+    deviceManager.broadcastEqLinkUpdate(a, -1);
   }
 
   // --- dynamics / delay / routing ---
@@ -285,3 +369,6 @@ export class DeviceStore {
 }
 
 export const device = new DeviceStore();
+
+// Export for backward compatibility - single device mode still works
+export { deviceManager } from "./device-manager.ts";
