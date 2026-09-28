@@ -35,6 +35,14 @@ export class WebHidTransport implements DspTransport {
     return dev ? new WebHidTransport(dev) : null;
   }
 
+  /** Create a transport from an already-selected device (for multi-device scenarios). */
+  static async fromDevice(device: HIDDevice): Promise<WebHidTransport | null> {
+    if (!WebHidTransport.supported()) return null;
+    // Verify it's the right device type
+    if (device.vendorId !== VENDOR_ID || device.productId !== PRODUCT_ID) return null;
+    return new WebHidTransport(device);
+  }
+
   private constructor(private readonly device: HIDDevice) {}
 
   get isOpen(): boolean { return this.device.opened; }

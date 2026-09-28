@@ -68,9 +68,11 @@
         };
         deviceManager.connect(device, 'websocket', info);
       } else if (!isRemote && deviceOrUrl instanceof HIDDevice) {
-        // Connect to local USB DSP
-        const transport = new WebHidTransport(deviceOrUrl as HIDDevice);
-        await device._bind(transport);
+        // Connect to local USB DSP using the specific device provided
+        const transport = await WebHidTransport.fromDevice(deviceOrUrl as HIDDevice);
+        if (transport) {
+          await device.bind(transport);
+        }
         const info = {
           path: deviceOrUrl.path,
           productName: deviceOrUrl.productName || "DSP 4x4"

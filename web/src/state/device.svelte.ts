@@ -100,6 +100,11 @@ export class DeviceStore {
     });
   }
 
+  /** Public version of _bind for direct transport attachment (e.g., multi-device scenarios) */
+  async bind(t: WebHidTransport | NativeTransport | WebSocketTransport): Promise<void> {
+    await this._bind(t);
+  }
+
   /** Read the 9 channel-state pages on connect → mirror preset name, channel names, gains. */
   private async hydrate(): Promise<void> {
     if (!this.dsp) return;
