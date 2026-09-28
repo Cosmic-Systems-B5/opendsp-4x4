@@ -6,7 +6,7 @@
 </script>
 
 <div class="header" style="--c:var(--ch-{index})">
-  <span class="glabel">Gain</span>
+  <span class="gain_label">Gain</span>
   <div class="fader">
     <input type="range" min="-60" max="12" step="0.5" value={ch.gainDb} oninput={(e) => device.setGainDb(index, +(e.currentTarget).value)} />
     <span class="db mono">{ch.gainDb >= 0 ? "+" : ""}{ch.gainDb.toFixed(1)} dB</span>
@@ -19,7 +19,7 @@
 
 <style>
   .header { display: flex; align-items: center; gap: .5rem; padding: .55rem .7rem; background: var(--bg-panel); border: 1px solid var(--line); border-radius: var(--radius); }
-  .glabel { font-size: .72rem; color: var(--text-dim); flex-shrink: 0; }
+  .gain_label { font-size: .72rem; color: var(--text-dim); flex-shrink: 0; }
   .fader { flex: 1 1 auto; min-width: 60px; max-width: 240px; display: flex; align-items: center; gap: .5rem; }
   .fader input { flex: 1; min-width: 0; accent-color: var(--c); }
   .db { width: 9ch; flex-shrink: 0; text-align: left; font-size: .8rem; }
@@ -29,5 +29,4 @@
   .mode-toggle.peq { border-color: #4ade80; } /* green for PEQ */
   .mode-toggle.geq { border-color: var(--accent); } /* blue/cyan for GEQ */
   .meter { flex: 1; text-align: right; }
-  .meter .meter { width: auto; display: inline-block; }
 </style>
