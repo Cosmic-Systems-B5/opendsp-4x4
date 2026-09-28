@@ -8,7 +8,7 @@
 <div class="header" style="--c:var(--ch-{index})">
   <span class="glabel">Gain</span>
   <div class="fader">
-    <input type="range" min="-60" max="12" step="0.5" value={ch.gainDb} oninput={(e) => device.setGainDb(index, +(e.currentTarget as HTMLInputElement).value)} />
+    <input type="range" min="-60" max="12" step="0.5" value={ch.gainDb} oninput={(e) => device.setGainDb(index, +(e.currentTarget).value)} />
     <span class="db mono">{ch.gainDb >= 0 ? "+" : ""}{ch.gainDb.toFixed(1)} dB</span>
   </div>
   <button class="tgl" class:on={ch.mute} onclick={() => device.setMute(index, !ch.mute)}>Mute</button>
