@@ -1,5 +1,6 @@
 // Decoders for the device's readback replies (decoded from observed traffic):
-//  - 0x40 level poll: 8 channel meters at data offsets 2,5,8,…,23 (stride 3).
+//  - 0x40 level poll: 8 channel meters at payload offsets 2,5,8,…,23 (stride 3).
+//    Full request payload: [0x00, addr, N, code]. Data starts after that.
 //  - 0x27/0x24 channel-state: nine 50-byte pages reconstruct the 450-byte preset
 //    image (preset name @+2; input records 24B @16/40/64/88; output records 74B
 //    @112/186/260/334). Gain: input @+18, output @+66 (16-bit, level-raw scale).
@@ -12,9 +13,13 @@ import type { Reply } from "./frame.ts";
 const METER_FLOOR = 30; // raw counts at/below the observed idle floor read as silence
 const METER_TOP = 72; // raw counts at/above this read as full scale
 
-/** 8 channel levels (0..1) from a 0x40 reply. Order: In A–D, Out 1–4. */
+/** 8 channel levels (0..1) from a 0x40 reply. Order: In A–D, Out 1–4.
+ *  The meter bytes are at payload offsets 2,5,8,...,23 (stride 3).
+ *  parseReply returns data starting after the header [addr,0x00,N,code],
+ *  so we need offset 2 from the start of data to get to payload[2]. */
 export function levelsFromReply(r: Reply): number[] | null {
   if (r.code !== 0x40 || r.data.length < 24) return null;
+  // Meter bytes are at payload offsets 2,5,8,... which is data offset 2
   return Array.from({ length: 8 }, (_, i) => {
     const raw = r.data[2 + 3 * i] ?? 0;
     return Math.max(0, Math.min(1, (raw - METER_FLOOR) / (METER_TOP - METER_FLOOR)));

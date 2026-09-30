@@ -166,12 +166,21 @@ export class DeviceStore {
   private startMeters(): void {
     this.stopMeters();
     let busy = false; // skip a tick if the previous poll hasn't replied — avoids piling up the transport
+    // Meter smoothing: alpha for exponential moving average (0.3 = 30% new value, 70% old)
+    const METER_SMOOTHING = 0.3;
     this.meterTimer = setInterval(() => {
       if (!this.dsp || busy) return;
       busy = true;
       void this.dsp.send(getLevelsFrame()).then((r) => {
         const lv = levelsFromReply(r);
-        if (lv) for (let i = 0; i < 8; i++) this.ch(i).meter = lv[i]!;
+        if (lv) for (let i = 0; i < 8; i++) {
+          // Smooth meter values to prevent jumpy display
+          const currentMeter = this.ch(i).meter;
+          const newMeter = lv[i]!;
+          // Only apply smoothing if we have a valid previous value
+          this.ch(i).meter = currentMeter === 0 && newMeter < 0.05 ? newMeter :
+            currentMeter + METER_SMOOTHING * (newMeter - currentMeter);
+        }
       }).catch(() => {}).finally(() => { busy = false; });
     }, 100);
   }
