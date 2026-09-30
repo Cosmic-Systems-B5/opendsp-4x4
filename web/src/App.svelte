@@ -19,11 +19,11 @@
   <span class="status" class:ok={device.connected}>{device.connected ? device.version || device.productName : device.error || "Not connected"}</span>
 </header>
 
+{#if !device.connected}
 <div class="warn-box">
-  {#if !device.connected}
     Not connected. Select System to configure connection.
-  {/if}
 </div>
+{/if}
 
 {#if viewMode === "routing"}
   <PatchBoard />

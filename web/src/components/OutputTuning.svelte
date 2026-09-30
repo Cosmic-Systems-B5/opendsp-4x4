@@ -5,7 +5,8 @@
   import EqPanel from "./EqPanel.svelte";
   import type { ChannelEq } from "../eq/types.ts";
 
-  let { index, eq = $bindable(), allEqs }: { index: number; eq?: ChannelEq; allEqs?: { ch: any; color: string }[] } = $props();
+  let {
+    index, eq = $bindable(), allEqs }: { index: number; eq?: ChannelEq; allEqs?: { ch: any; color: string }[] } = $props();
   const ch = $derived(device.ch(index));
 
   // Get extra EQs (all except current channel)

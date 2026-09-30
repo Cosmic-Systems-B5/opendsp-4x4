@@ -117,6 +117,7 @@
       <div class="device-list">
         {#if localDevices.length === 0}
           <p class="empty">No USB devices found. Connect a DSP and click the Local USB tab.</p>
+          <p class="empty"><button class="primary" onclick={() => device.connect()}>{device.connected ? "Reconnect…" : "Connect DSP…"}</button></p>
         {:else}
           <table class="device-table">
             <thead>
