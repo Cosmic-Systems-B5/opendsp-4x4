@@ -33,6 +33,17 @@ class DeviceManagerState {
   }
 
   connect(deviceStore: typeof defaultDevice, transportType: 'usb' | 'websocket', connectionInfo: ConnectedDevice['connectionInfo']): void {
+    // Check if a device with the same path/url is already connected (prevents duplicate connections)
+    for (const existing of this.devices) {
+      const isNewPath = transportType === 'usb' && existing.connectionInfo.path === connectionInfo.path;
+      const isNewUrl = transportType === 'websocket' && existing.connectionInfo.url === connectionInfo.url;
+
+      if (isNewPath || isNewUrl) {
+        console.warn(`Device ${connectionInfo.productName} is already connected (${existing.id})`);
+        return; // Don't add duplicate
+      }
+    }
+
     const role = this.devices.length === 0 ? 'master' : 'slave';
 
     const connectedDevice: ConnectedDevice = {
