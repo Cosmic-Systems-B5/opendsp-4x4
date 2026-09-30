@@ -124,10 +124,11 @@ export class WebSocketTransport implements DspTransport {
         this.pending = resolve;
         setTimeout(() => { if (this.pending === resolve) { this.pending = null; resolve(null); } }, perMs);
 
-        // Send frame as base64-encoded string
+        // Send frame as base64-encoded JSON message
         const data = btoa(String.fromCharCode(...frame));
         try {
-          this.ws!.send(data);
+          const msg = JSON.stringify({ type: 'request', data });
+          this.ws!.send(msg);
         } catch (e) {
           if (this.pending === resolve) { this.pending = null; resolve(null); }
         }

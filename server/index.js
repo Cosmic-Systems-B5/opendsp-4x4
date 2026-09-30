@@ -85,8 +85,13 @@ function broadcastReport(reportBytes) {
   const data = btoa(String.fromCharCode(...reportBytes));
   const msg = JSON.stringify({ type: 'report', data });
   for (const client of clients) {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(msg);
+    // Check both readyState and if client still exists in Set
+    try {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(msg);
+      }
+    } catch (e) {
+      console.error('Error sending to client:', e.message);
     }
   }
 }
@@ -113,8 +118,11 @@ const connectedDevices = new Map();
  * Register a client as a DSP connection
  */
 function registerClient(ws, path) {
-  const id = `client-${clients.size}`;
-  const isMaster = clients.size === 0 && hidDevice?.path === path;
+  // Use connectedDevices size to ensure unique IDs
+  const id = `client-${connectedDevices.size}`;
+  // Determine role: first connected device is master if no other master exists
+  const hasMaster = Array.from(connectedDevices.values()).some(d => d.role === 'master');
+  const isMaster = !hasMaster && hidDevice?.path === path;
   connectedDevices.set(id, {
     id,
     ws,
@@ -131,14 +139,12 @@ function unregisterClient(ws) {
   for (const [id, info] of connectedDevices.entries()) {
     if (info.ws === ws) {
       connectedDevices.delete(id);
-      // Reassign master role if needed
-      if (clients.size > 0 && !Array.from(connectedDevices.values()).find(d => d.role === 'master')) {
-        const firstClient = Array.from(clients)[0];
+      // Reassign master role if needed - find first remaining client that's not the removed one
+      if (connectedDevices.size > 0 && !Array.from(connectedDevices.values()).find(d => d.role === 'master')) {
+        // Find first available client and make them master
         for (const [dinfo] of connectedDevices.entries()) {
-          if (dinfo.ws === firstClient) {
-            dinfo.role = 'master';
-            break;
-          }
+          dinfo.role = 'master';
+          break;
         }
       }
       break;
@@ -232,6 +238,10 @@ const wss = new WebSocketServer({ server: httpServer });
 wss.on('connection', (ws) => {
   console.log('Client connected');
   clients.add(ws);
+
+  // Register the client for device tracking with path from WebSocket URL if available
+  const urlPath = new URL(ws._socket.remoteAddress ? `http://localhost${ws.upgradeReq.url}` : 'http://localhost').pathname;
+  registerClient(ws, urlPath);
 
   // If this is the first client, try to connect to HID if not already
   if (clients.size === 1 && !hidDevice) {
