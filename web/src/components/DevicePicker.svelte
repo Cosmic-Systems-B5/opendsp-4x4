@@ -9,6 +9,13 @@
   let loadingRemote = $state(false);
   let connecting = $state(false);
 
+  // Auto-refresh local devices when tab becomes active
+  $effect(() => {
+    if (selectedTab === "usb" && WebHidTransport.supported()) {
+      loadLocalDevices();
+    }
+  });
+
   // Load saved URL
   const savedUrl = typeof localStorage !== "undefined" ? localStorage.getItem("opendsp-remote-url") : null;
   if (savedUrl) remoteUrl = savedUrl;
@@ -95,11 +102,6 @@
     device.connected = false;
     deviceManager.disconnectAll();
   }
-
-  // Auto-load devices on mount
-  $effect(() => {
-    loadLocalDevices();
-  });
 </script>
 
 <div class="device-picker">
