@@ -1,17 +1,20 @@
 DSP Code Changes Required
 
 Don't be verbose, just the facts.
-Don’t remove any new styling or code I’ve added.
+Don't remove any new styling or code I've added.
+
+Commit each line's changes to local git
+
 You can start the Server using /server/package.json -> npm run start
 You can start the Webapp using /web/package.json -> npm run dev
 You can run the Webapp Tests using /web/package.json -> npm run test
 
 Webapp:
-Make page choice persistent when the page refreshes.
-Update USB connection UI when state changes.
-Don’t allow multiple connections to the same DSP device in the management code.
-Change UI to change the connect button to a connected state when connected.
-Audio monitor UI doesn’t work correctly. Jumpy and doesn’t reflect the actual audio. Possible byte order issue?
+[X] Make page choice persistent when the page refreshes.
+[X] Update USB connection UI when state changes.
+[X] Don't allow multiple connections to the same DSP device in the management code.
+[X] Change UI to change the connect button to a connected state when connected.
+[X] Audio monitor UI doesn't work correctly. Jumpy and doesn't reflect the actual audio. Possible byte order issue?
 
 Server:
-Server Websocket bridge not working. Server runs but web app can’t connect.
+[X] Server Websocket bridge not working. Server runs but web app can't connect.
