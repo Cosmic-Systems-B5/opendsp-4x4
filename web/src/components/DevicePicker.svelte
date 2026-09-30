@@ -68,6 +68,15 @@
   }
 
   async function connectDevice(deviceOrUrl: HIDDevice | string, isRemote: boolean) {
+    // Don't allow re-connecting if already connected to the same device
+    if (device.connected) {
+      const currentPath = deviceManager.devices.find(d => d.role === 'master')?.connectionInfo.path;
+      const currentUrl = deviceManager.devices.find(d => d.role === 'master')?.connectionInfo.url;
+
+      if (isRemote && currentUrl === deviceOrUrl) return;
+      if (!isRemote && deviceOrUrl instanceof HIDDevice && currentPath === deviceOrUrl.path) return;
+    }
+
     connecting = true;
     try {
       if (isRemote && typeof deviceOrUrl === 'string') {
@@ -134,7 +143,13 @@
                 <tr>
                   <td>{dev.productName || "Unknown"}</td>
                   <td class="mono">0x{dev.vendorId.toString(16).padStart(4, '0')} : 0x{dev.productId.toString(16).padStart(4, '0')}</td>
-                  <td><button onclick={() => connectDevice(dev, false)} disabled={connecting}>Connect</button></td>
+                  <td>
+                    {#if device.connected && deviceManager.devices.find(d => d.connectionInfo.path === dev.path)}
+                      <button disabled class="connected-btn">Connected</button>
+                    {:else}
+                      <button onclick={() => connectDevice(dev, false)} disabled={connecting}>Connect</button>
+                    {/if}
+                  </td>
                 </tr>
               {/each}
             </tbody>
@@ -164,7 +179,13 @@
                 <tr>
                   <td>{dev.product}</td>
                   <td class="mono">{dev.path}</td>
-                  <td><button onclick={() => connectDevice(dev.path, true)} disabled={connecting}>Connect</button></td>
+                  <td>
+                    {#if device.connected && deviceManager.devices.find(d => d.connectionInfo.url === dev.path)}
+                      <button disabled class="connected-btn">Connected</button>
+                    {:else}
+                      <button onclick={() => connectDevice(dev.path, true)} disabled={connecting}>Connect</button>
+                    {/if}
+                  </td>
                 </tr>
               {/each}
             </tbody>
@@ -215,4 +236,7 @@
   .muted { opacity: .7; font-size: .8rem; }
 
   .hint { color: var(--text-dim); text-align: center; padding: 1.25rem; font-style: italic; }
+
+  .connected-btn { background: var(--good); color: #0a0d12; border: none; padding: .35rem .7rem;
+                   border-radius: 6px; font-size: .85rem; cursor: default; opacity: 0.7; }
 </style>
