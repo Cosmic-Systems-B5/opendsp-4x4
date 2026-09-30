@@ -4,7 +4,18 @@
   import TuningView from "./components/TuningView.svelte";
   import SystemView from "./components/SystemView.svelte";
 
-  let viewMode = $state<"tuning" | "routing" | "system">("tuning");
+  // Load saved view mode from localStorage, default to "tuning"
+  const savedViewMode = typeof localStorage !== "undefined" ? localStorage.getItem("opendsp-view-mode") : null;
+  let viewMode = $state<"tuning" | "routing" | "system">(savedViewMode ?? "tuning");
+
+  // Save view mode to localStorage when it changes
+  $effect(() => {
+    try {
+      localStorage.setItem("opendsp-view-mode", viewMode);
+    } catch (e) {
+      // Ignore storage errors
+    }
+  });
 </script>
 
 <header class="top">
