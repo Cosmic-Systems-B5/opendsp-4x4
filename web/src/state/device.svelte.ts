@@ -11,7 +11,6 @@ import { levelsFromReply, reconstructPresetImage, parsePresetImage } from "../pr
 import { makeChannels, OUT_BASE, DEFAULT_BAND_FREQS, type Channel } from "./model.ts";
 import type { ChannelEq } from "../eq/types.ts";
 import { deviceManager } from "./device-manager.ts";
-import presetManager from "./preset-manager.ts";
 
 const DEFAULTS_KEY = "opendsp-defaults";
 
@@ -417,7 +416,7 @@ export class DeviceStore {
 
   // --- JSON Preset Save/Load ---
   async savePresetToJson(): Promise<void> {
-    const presetData = presetManager.exportCurrentPreset(this);
+    const presetData = presetManager.exportCurrentPreset();
     try {
       const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(presetData);
       const downloadAnchorNode = document.createElement('a');
@@ -435,7 +434,7 @@ export class DeviceStore {
   async loadPresetFromJson(jsonString: string): Promise<void> {
     try {
       const parsed = JSON.parse(jsonString);
-      presetManager.importPreset(parsed, this);
+      presetManager.importPreset(parsed);
     } catch (e) {
       console.error('Error loading preset:', e);
       throw new Error(`Invalid preset data: ${(e as Error).message}`);

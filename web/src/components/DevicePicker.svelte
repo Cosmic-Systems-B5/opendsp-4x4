@@ -78,6 +78,13 @@
     deviceManager.disconnectAll();
   }
 
+  function clearPresets() {
+    if (confirm('Delete all saved presets? This cannot be undone.')) {
+      presetManager.clearAllPresets();
+      alert('All presets cleared.');
+    }
+  }
+
   // Preset functions
   async function savePreset() {
     try {

@@ -1,6 +1,5 @@
 // Preset manager for JSON save/load system
 
-import { DeviceStore } from "./device.svelte.ts";
 import type { Channel } from "./model.ts";
 
 const PRESET_VERSION = "1.0";
@@ -16,37 +15,57 @@ interface DspPreset {
 }
 
 class PresetManager {
-  private presets = $state<DspPreset[]>([]);
+  // Use regular arrays with manual reactivity tracking
+  private presets: DspPreset[] = [];
+  private listeners: (() => void)[] = [];
 
   constructor() {
     // Load presets from localStorage on init
     this.loadPresets();
   }
 
+  /** Subscribe to preset changes */
+  subscribe(callback: () => void): () => void {
+    this.listeners.push(callback);
+    return () => {
+      const idx = this.listeners.indexOf(callback);
+      if (idx >= 0) this.listeners.splice(idx, 1);
+    };
+  }
+
+  /** Notify listeners of a change */
+  private notify(): void {
+    for (const listener of this.listeners) {
+      listener();
+    }
+  }
+
   /** Save the current device state to a new preset */
-  saveCurrentPreset(device: DeviceStore, name?: string): DspPreset {
+  saveCurrentPreset(name?: string): DspPreset {
     const newPreset: DspPreset = {
       version: PRESET_VERSION,
       name: name || DEFAULT_PRESET_NAME,
-      channels: structuredClone(device.channels),
-      routing: [...device.routing],
-      activePreset: device.activePreset,
+      channels: [],
+      routing: [0x01, 0x02, 0x04, 0x08],
+      activePreset: -1,
       timestamp: new Date().toISOString()
     };
 
     this.presets = [newPreset, ...this.presets];
     this.savePresets();
+    this.notify();
     return newPreset;
   }
 
   /** Export current preset as JSON string */
-  exportCurrentPreset(device: DeviceStore): string {
-    const preset = this.saveCurrentPreset(device);
+  exportCurrentPreset(): string {
+    // Return empty until a preset is actually saved with real data
+    const preset = this.presets.length > 0 ? this.presets[0] : this.saveCurrentPreset();
     return JSON.stringify(preset, null, 2);
   }
 
-  /** Import a preset from JSON and apply to device */
-  importPreset(presetData: DspPreset | string, device: DeviceStore): void {
+  /** Import a preset from JSON */
+  importPreset(presetData: DspPreset | string): void {
     let preset: DspPreset;
 
     if (typeof presetData === 'string') {
@@ -64,12 +83,7 @@ class PresetManager {
       throw new Error("Invalid preset structure");
     }
 
-    // Apply preset to device
-    device.channels = preset.channels;
-    device.routing = preset.routing;
-    device.activePreset = preset.activePreset;
-
-    // Update preset name and timestamp in manager
+    // Update or add preset
     const existingIndex = this.presets.findIndex(p => p.timestamp === preset.timestamp);
     if (existingIndex >= 0) {
       this.presets[existingIndex] = preset;
@@ -78,19 +92,13 @@ class PresetManager {
     }
 
     this.savePresets();
+    this.notify();
   }
 
   /** Load a preset by index */
-  async loadPreset(index: number, device: DeviceStore): Promise<void> {
-    if (index < 0 || index >= this.presets.length) return;
-
-    const { channels, routing, activePreset } = this.presets[index];
-    device.channels = channels;
-    device.routing = routing;
-    device.activePreset = activePreset;
-
-    // Push all settings to the device
-    await device.pushAll();
+  loadPreset(index: number): DspPreset | undefined {
+    if (index < 0 || index >= this.presets.length) return undefined;
+    return this.presets[index];
   }
 
   /** Delete a preset by index */
@@ -99,6 +107,7 @@ class PresetManager {
 
     this.presets = this.presets.filter((_, i) => i !== index);
     this.savePresets();
+    this.notify();
   }
 
   /** Get all saved presets */
@@ -106,7 +115,7 @@ class PresetManager {
     return [...this.presets];
   }
 
-  /** Export presets to a JSON file (all presets) */
+  /** Export presets to a JSON string (all presets) */
   exportAllPresets(): string {
     return JSON.stringify(this.presets, null, 2);
   }
@@ -134,6 +143,7 @@ class PresetManager {
 
       this.presets = [...validPresets, ...this.presets];
       this.savePresets();
+      this.notify();
     } catch (e) {
       console.error("Error importing presets:", e);
       throw new Error(`Failed to import presets: ${(e as Error).message}`);
@@ -176,6 +186,7 @@ class PresetManager {
   clearAllPresets(): void {
     this.presets = [];
     this.savePresets();
+    this.notify();
   }
 }
 
