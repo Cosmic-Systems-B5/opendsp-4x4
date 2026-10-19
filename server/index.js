@@ -27,10 +27,9 @@ let hidDevice = null;
 let reconnectTimer = null;
 let isConnecting = false;
 
-// Mock mode state
+// Mock mode state (process.env.MOCK_MODE must be checked before use)
 let mockHidBuffer = [];
 let mockPendingRequest = null;
-const MOCK_MODE = process.env.MOCK_MODE === 'true';
 
 /**
  * Find and open the DSP device
@@ -69,18 +68,6 @@ async function connectHid() {
   }
 }
 
-/**
- * Close the HID connection
- */
-function disconnectHid() {
-  if (hidDevice) {
-    try {
-      hidDevice.close();
-    } catch (e) {}
-    hidDevice = null;
-  }
-  clearTimeout(reconnectTimer);
-}
 
 /**
  * DLE/STX/ETX constants for the protocol
