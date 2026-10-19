@@ -11,39 +11,42 @@ import { levelsFromReply, reconstructPresetImage, parsePresetImage } from "../pr
 import { makeChannels, OUT_BASE, DEFAULT_BAND_FREQS, type Channel } from "./model.ts";
 import type { ChannelEq } from "../eq/types.ts";
 import { deviceManager } from "./device-manager.ts";
+import presetManager from "./preset-manager.ts";
 
 const DEFAULTS_KEY = "opendsp-defaults";
 
 export type DeviceRole = 'master' | 'slave';
 
-// WebSocket URLs for multiple servers
-let webSocketUrls = $state<string[]>([
-  "ws://localhost:8765",
-  "ws://localhost:8766",
-  "ws://localhost:8767"
-]);
-
-// Update webSocketUrls to localStorage when it changes
-$effect(() => {
+// WebSocket URLs for multiple servers - stored in localStorage
+function loadWebSocketUrls(): string[] {
   try {
-    localStorage.setItem("opendsp-ws-urls", JSON.stringify(webSocketUrls));
-  } catch (e) {
-    // Ignore storage errors
-  }
-});
+    const saved = localStorage.getItem("opendsp-ws-urls");
+    if (saved) return JSON.parse(saved);
+  } catch (e) {}
+  return ["ws://localhost:8765", "ws://localhost:8766", "ws://localhost:8767"];
+}
+
+function saveWebSocketUrls(urls: string[]): void {
+  try {
+    localStorage.setItem("opendsp-ws-urls", JSON.stringify(urls));
+  } catch (e) {}
+}
+
+// Store for WebSocket URLs
+let webSocketUrls = loadWebSocketUrls();
 
 export class DeviceStore {
-  connected = $state(false);
-  productName = $state("");
-  version = $state("");
-  error = $state("");
-  presetName = $state("");
-  activePreset = $state(-1); // last-recalled preset slot (highlights its pad); -1 = unknown on connect
-  hasDefaults = $state(typeof localStorage !== "undefined" && localStorage.getItem(DEFAULTS_KEY) !== null);
-  channels = $state<Channel[]>(makeChannels());
-  routing = $state<number[]>([0x01, 0x02, 0x04, 0x08]); // Out1..4 input masks (default diagonal)
-  selected = $state(-1); // selected channel index; -1 = nothing open (collapsed overview on load)
-  eqLink = $state<Record<number, number>>({}); // output index -> linked partner (symmetric); EQ edits mirror
+  connected = false;
+  productName = "";
+  version = "";
+  error = "";
+  presetName = "";
+  activePreset = -1; // last-recalled preset slot (highlights its pad); -1 = unknown on connect
+  hasDefaults = typeof localStorage !== "undefined" && localStorage.getItem(DEFAULTS_KEY) !== null;
+  channels: Channel[] = makeChannels();
+  routing: number[] = [0x01, 0x02, 0x04, 0x08]; // Out1..4 input masks (default diagonal)
+  selected = -1; // selected channel index; -1 = nothing open (collapsed overview on load)
+  eqLink: Record<number, number> = {}; // output index -> linked partner (symmetric); EQ edits mirror
   role: DeviceRole = 'master'; // set by DeviceManager when multi-device is active
 
   private dsp: Dsp | null = null;
@@ -301,7 +304,7 @@ export class DeviceStore {
     this.sendPeqBand(i, band);
     const p = this.eqLink[i];
     if (p !== undefined && this.ch(p).eq) {
-      Object.assign(this.ch(p).eq!.bands[band]!, $state.snapshot(this.ch(i).eq!.bands[band]!));
+      Object.assign(this.ch(p).eq!.bands[band]!, { ...this.ch(i).eq!.bands[band]! });
       this.sendPeqBand(p, band);
     }
   }
@@ -312,8 +315,8 @@ export class DeviceStore {
       gainRaw: this.cal.peqGainDbToRaw(b.gainDb, b.type), type: b.type, bypass: b.bypass,
     }));
   }
-  commitHpf(i: number): void { this.sendHpf(i); const p = this.eqLink[i]; if (p !== undefined && this.ch(p).eq) { this.ch(p).eq!.hpf = { ...$state.snapshot(this.ch(i).eq!.hpf) }; this.sendHpf(p); } }
-  commitLpf(i: number): void { this.sendLpf(i); const p = this.eqLink[i]; if (p !== undefined && this.ch(p).eq) { this.ch(p).eq!.lpf = { ...$state.snapshot(this.ch(i).eq!.lpf) }; this.sendLpf(p); } }
+  commitHpf(i: number): void { this.sendHpf(i); const p = this.eqLink[i]; if (p !== undefined && this.ch(p).eq) { this.ch(p).eq!.hpf = { ...this.ch(i).eq!.hpf! }; this.sendHpf(p); } }
+  commitLpf(i: number): void { this.sendLpf(i); const p = this.eqLink[i]; if (p !== undefined && this.ch(p).eq) { this.ch(p).eq!.lpf = { ...this.ch(i).eq!.lpf! }; this.sendLpf(p); } }
   private sendHpf(i: number): void { const x = this.ch(i).eq!.hpf; this.commit(`hpf${i}`, () => this.dsp!.crossoverHpf(i, this.cal.xoverHzToRaw(x.freqHz), x.slope)); }
   private sendLpf(i: number): void { const x = this.ch(i).eq!.lpf; this.commit(`lpf${i}`, () => this.dsp!.crossoverLpf(i, this.cal.xoverHzToRaw(x.freqHz), x.slope)); }
 
@@ -326,7 +329,7 @@ export class DeviceStore {
   /** Copy a whole channel's EQ (7 bands + crossover) to another output and push it. */
   copyEqTo(src: number, dst: number): void {
     const s = this.ch(src).eq; if (!s || !this.ch(dst).eq) return;
-    this.ch(dst).eq = structuredClone($state.snapshot(s)) as ChannelEq;
+    this.ch(dst).eq = structuredClone(s) as ChannelEq;
     this.pushEq(dst);
   }
   private pushEq(i: number): void {
@@ -445,18 +448,22 @@ export class DeviceStore {
   addServerUrl(url: string): void {
     if (!webSocketUrls.includes(url)) {
       webSocketUrls = [...webSocketUrls, url];
+      saveWebSocketUrls(webSocketUrls);
     }
   }
 
   removeServerUrl(index: number): void {
     webSocketUrls = webSocketUrls.filter((_, i) => i !== index);
+    saveWebSocketUrls(webSocketUrls);
   }
 
   updateServerUrl(index: number, newUrl: string): void {
     webSocketUrls[index] = newUrl;
+    saveWebSocketUrls(webSocketUrls);
   }
 }
 
+// Export the singleton instance
 export const device = new DeviceStore();
 
 // Export for backward compatibility - single device mode still works
