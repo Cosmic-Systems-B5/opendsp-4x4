@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { device, deviceManager } from "../state/device.svelte.ts";
+  import { onMount, onCleanup } from 'svelte';
+  import { device, deviceManager, startMdnsDiscovery, stopMdnsDiscovery, getDiscoveredServers, onServerListChange } from "../state/device.svelte.ts";
+  import { mdnsBrowser, onServersChange } from "../mdns/mdns-browser.ts";
   import presetManager from "../state/preset-manager.ts";
 
   let remoteUrl = $state<string>("ws://localhost:8765");
@@ -10,6 +12,36 @@
   // Load saved URL
   const savedUrl = typeof localStorage !== "undefined" ? localStorage.getItem("opendsp-remote-url") : null;
   if (savedUrl) remoteUrl = savedUrl;
+
+  // mDNS discovery
+  let discoveredServers = $state<Array<{name: string; host: string; port: number; type: string; protocol: string}>>([]);
+  let mdnsStarted = $state(false);
+
+  // Start mDNS discovery when component mounts
+  onMount(async () => {
+    await startMdnsDiscovery();
+    mdnsStarted = true;
+
+    // Subscribe to server updates from mdns-browser directly
+    const unsubscribe = onServersChange((servers) => {
+      discoveredServers = servers;
+    });
+
+    // Also subscribe via device wrapper
+    const deviceUnsubscribe = onServerListChange((servers) => {
+      discoveredServers = servers;
+    });
+
+    // Clean up on unmount
+    onCleanup(() => {
+      stopMdnsDiscovery();
+      if (unsubscribe) unsubscribe();
+      if (deviceUnsubscribe) deviceUnsubscribe();
+    });
+  });
+      if (unsubscribe) unsubscribe();
+    });
+  });
 
   async function loadRemoteDevices() {
     loadingRemote = true;
@@ -192,6 +224,40 @@
     </div>
   </div>
 
+  <div class="discovered-section">
+    <h3>Discovered Servers (mDNS)</h3>
+    <p class="hint">Servers on your local network advertising via Bonjour/mDNS.</p>
+
+    {#if discoveredServers.length === 0}
+      <p class="empty">{#if mdnsStarted}No servers found yet...{:else}Starting mDNS discovery...{/if}</p>
+    {:else}
+      <table class="device-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Host</th>
+            <th>Port</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each discoveredServers as server (server.name)}
+            <tr>
+              <td>{server.name}</td>
+              <td class="mono">{server.host}</td>
+              <td class="mono">{server.port}</td>
+              <td>
+                <button onclick={() => connectDevice(`ws://${server.host}:${server.port}`)} disabled={connecting}>
+                  Connect
+                </button>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {/if}
+  </div>
+
   <div class="presets-section">
     <h3>Presets (JSON)</h3>
     <p class="hint">Save and load device configurations as JSON files.</p>
@@ -241,10 +307,10 @@
 <style>
   .device-picker { width: 100%; max-width: 900px; margin: 0 auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-panel); overflow: hidden; }
 
-  .connection-section, .presets-section { padding: 1rem; border-bottom: 1px solid var(--line); }
-  .connection-section:last-child, .presets-section:last-child { border-bottom: none; }
+  .connection-section, .presets-section, .discovered-section { padding: 1rem; border-bottom: 1px solid var(--line); }
+  .connection-section:last-child, .presets-section:last-child, .discovered-section:last-child { border-bottom: none; }
 
-  .connection-section h3, .presets-section h3 { margin-top: 0; color: var(--text); font-size: 1rem; }
+  .connection-section h3, .presets-section h3, .discovered-section h3 { margin-top: 0; color: var(--text); font-size: 1rem; }
   .hint { color: var(--text-dim); font-style: italic; font-size: .85rem; margin-bottom: .75rem; }
 
   .url-inputs, .add-url-row { display: flex; gap: .5rem; margin-bottom: .75rem; flex-wrap: wrap; }

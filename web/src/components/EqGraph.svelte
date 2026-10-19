@@ -125,16 +125,18 @@
       onpointerdown={(e) => startDrag("band", h.i, e)}
       ondblclick={() => resetBand(h.i)}
       oncontextmenu={(e) => cycleType(h.i, e)}
+      role="button"
+      aria-label={`Band ${h.i + 1} handle`}
     />
     <text class="bnum" x={h.x} y={h.y + 3} pointer-events="none">{h.i + 1}</text>
   {/each}
 
   <!-- crossover handles (X only, at base) -->
   {#if eq.hpf.slope !== 0}
-    <rect class="xohandle" x={hpfX - 6} y={H - 16} width="12" height="12" rx="2" onpointerdown={(e) => startDrag("hpf", 0, e)} />
+    <rect class="xohandle" x={hpfX - 6} y={H - 16} width="12" height="12" rx="2" onpointerdown={(e) => startDrag("hpf", 0, e)} role="button" aria-label="HPF crossover handle" />
   {/if}
   {#if eq.lpf.slope !== 0}
-    <rect class="xohandle" x={lpfX - 6} y={H - 16} width="12" height="12" rx="2" onpointerdown={(e) => startDrag("lpf", 0, e)} />
+    <rect class="xohandle" x={lpfX - 6} y={H - 16} width="12" height="12" rx="2" onpointerdown={(e) => startDrag("lpf", 0, e)} role="button" aria-label="LPF crossover handle" />
   {/if}
 </svg>
 

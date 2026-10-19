@@ -53,5 +53,4 @@
 
   /* GEQ mode - graph takes full width, HPF/LPF below */
   .geq-mode { flex-direction: column; gap: 1rem; align-items: stretch; }
-  .geq-mode > :first-child { flex: 1; min-width: 0; }
 </style>

@@ -12,10 +12,51 @@ import { makeChannels, OUT_BASE, DEFAULT_BAND_FREQS, type Channel } from "./mode
 import type { ChannelEq } from "../eq/types.ts";
 import { deviceManager } from "./device-manager.ts";
 import presetManager from "./preset-manager.ts";
+import { mdnsBrowser } from "../mdns/mdns-browser.ts";
 
 const DEFAULTS_KEY = "opendsp-defaults";
 
 export type DeviceRole = 'master' | 'slave';
+
+// mDNS discovery state
+let mdnsStarted = false;
+
+/**
+ * Start mDNS browser for discovering openDSP servers on the network
+ */
+export async function startMdnsDiscovery(): Promise<void> {
+  if (!mdnsStarted) {
+    try {
+      await mdnsBrowser.start();
+      mdnsStarted = true;
+      console.log('mDNS discovery started');
+    } catch (e) {
+      console.warn('Failed to start mDNS discovery:', e);
+    }
+  }
+}
+
+/**
+ * Stop mDNS browser
+ */
+export async function stopMdnsDiscovery(): Promise<void> {
+  if (mdnsStarted) {
+    try {
+      await mdnsBrowser.stop();
+      mdnsStarted = false;
+      console.log('mDNS discovery stopped');
+    } catch (e) {
+      console.warn('Failed to stop mDNS discovery:', e);
+    }
+  }
+}
+
+/**
+ * Get list of discovered servers via mDNS
+ */
+export function getDiscoveredServers() {
+  return mdnsBrowser.getServers();
+}
 
 // WebSocket URLs for multiple servers - stored in localStorage
 function loadWebSocketUrls(): string[] {
@@ -465,6 +506,30 @@ export class DeviceStore {
 
 // Export the singleton instance
 export const device = new DeviceStore();
+
+// --- mDNS Server Discovery Callbacks ---
+let serverListCallbacks: Set<(servers: any[]) => void> = new Set();
+
+/**
+ * Register a callback for when the server list changes
+ */
+export function onServerListChange(callback: (servers: any[]) => void): () => void {
+  serverListCallbacks.add(callback);
+  return () => serverListCallbacks.delete(callback);
+}
+
+/**
+ * Notify listeners of server list changes
+ */
+function notifyServerListChange(servers: any[]) {
+  for (const callback of serverListCallbacks) {
+    try {
+      callback(servers);
+    } catch (e) {
+      console.error('Error in server list change callback:', e);
+    }
+  }
+}
 
 // Export for backward compatibility - single device mode still works
 export { deviceManager } from "./device-manager.ts";
