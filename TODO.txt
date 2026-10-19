@@ -9,12 +9,20 @@ You can start the Server using /server/package.json -> npm run start
 You can start the Webapp using /web/package.json -> npm run dev
 You can run the Webapp Tests using /web/package.json -> npm run test
 
-Webapp:
-[X] Make page choice persistent when the page refreshes.
-[X] Update USB connection UI when state changes.
-[X] Don't allow multiple connections to the same DSP device in the management code.
-[X] Change UI to change the connect button to a connected state when connected.
-[X] Audio monitor UI doesn't work correctly. Jumpy and doesn't reflect the actual audio. Possible byte order issue?
+Run these in full auto mode so I can leave it running and return with all the code changes completed.
+
+If API errors occur automatically retry the step.
 
 Server:
-[X] Server Websocket bridge not working. Server runs but web app can't connect.
+[ ] Add a mock device mode that makes both a single, or multiple dsps appear connected to the server. This mode should be able to be toggled from the server's web page as well as from the start command.
+[ ] Allow for multiple servers to be run on my dev machine in mock mode.
+[ ] Add web based logging to debug the connection and messages being sent and received.
+
+Webapp:
+[ ] Remove Android Support
+[ ] Remove local USB support, only enable connecting to remote units attached to the websocket servers
+[ ] Update the app to allow connecting to multiple servers at once.
+[ ] Add a JSON preset save and load system
+
+General
+[ ] Create a test script that runs two servers in mock device mode, each with a single dsp device and the web ui that can be run with a single command
