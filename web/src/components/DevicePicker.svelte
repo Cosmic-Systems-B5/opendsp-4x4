@@ -152,7 +152,7 @@
     </div>
 
     <div class="controls">
-      <button class="secondary-btn" on:click={() => showUrlInput = !showUrlInput}>
+      <button class="secondary-btn" onclick={() => showUrlInput = !showUrlInput}>
         {#if showUrlInput}Cancel{:else}+ Add Server{/if}
       </button>
       <button onclick={loadRemoteDevices} disabled={loadingRemote}>{#if loadingRemote}Loading...{:else}Refresh{/if}</button>
@@ -200,7 +200,7 @@
       </button>
       <label class="primary-btn">
         📂 Load Preset
-        <input type="file" accept=".json" style="display:none" on:change={loadPresetInput} />
+        <input type="file" accept=".json" style="display:none" onclick={(e) => loadPresetInput(e)} />
       </label>
       {#if presetManager.getPresets().length > 0}
         <button onclick={clearPresets} class="danger-btn">Clear Saved</button>
