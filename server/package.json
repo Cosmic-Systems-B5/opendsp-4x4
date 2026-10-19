@@ -5,7 +5,8 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "mock": "MOCK_MODE=true node index.js"
   },
   "dependencies": {
     "node-hid": "^3.4.0",

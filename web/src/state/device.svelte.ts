@@ -2,7 +2,6 @@
 // is debounced + sent through the (serialized) transport. Engineering-unit params
 // are converted to wire values via the Calibration seam.
 import { WebHidTransport } from "../transport/webhid.ts";
-import { NativeTransport } from "../transport/native.ts";
 import { WebSocketTransport } from "../transport/websocket.ts";
 import { Dsp } from "../dsp.ts";
 import { defaultCalibration, type Calibration } from "../eq/calibration.ts";
@@ -12,10 +11,27 @@ import { levelsFromReply, reconstructPresetImage, parsePresetImage } from "../pr
 import { makeChannels, OUT_BASE, DEFAULT_BAND_FREQS, type Channel } from "./model.ts";
 import type { ChannelEq } from "../eq/types.ts";
 import { deviceManager } from "./device-manager.ts";
+import presetManager from "./preset-manager.ts";
 
 const DEFAULTS_KEY = "opendsp-defaults";
 
 export type DeviceRole = 'master' | 'slave';
+
+// WebSocket URLs for multiple servers
+let webSocketUrls = $state<string[]>([
+  "ws://localhost:8765",
+  "ws://localhost:8766",
+  "ws://localhost:8767"
+]);
+
+// Update webSocketUrls to localStorage when it changes
+$effect(() => {
+  try {
+    localStorage.setItem("opendsp-ws-urls", JSON.stringify(webSocketUrls));
+  } catch (e) {
+    // Ignore storage errors
+  }
+});
 
 export class DeviceStore {
   connected = $state(false);
@@ -43,65 +59,71 @@ export class DeviceStore {
   /** Collapse the open node → all-collapsed patch-board overview. */
   collapse(): void { this.selected = -1; }
 
-  /** Connect via the device picker (needs a user gesture). On Android the native
-   *  bridge replaces the picker — open() raises the system USB-permission dialog.
-   *  If url is provided, connects to a remote DSP via WebSocket instead. */
+  /** Connect via WebSocket to remote DSP servers only.
+   *  Attempts to connect to configured URLs in order until one succeeds. */
   async connect(url?: string): Promise<void> {
     try {
-      let t: WebHidTransport | NativeTransport | WebSocketTransport | null = null;
-      if (url) {
-        if (!WebSocketTransport.supported())
-          throw new Error("WebSocket unavailable");
-        t = new WebSocketTransport(url);
-      } else if (NativeTransport.supported()) {
-        t = new NativeTransport();
-      } else {
-        t = await WebHidTransport.request();
+      if (!WebSocketTransport.supported())
+        throw new Error("WebSocket unavailable");
+
+      // Use provided URL or try all configured URLs
+      const urlsToTry = url ? [url] : webSocketUrls;
+
+      for (const serverUrl of urlsToTry) {
+        try {
+          const t = new WebSocketTransport(serverUrl.trim());
+          await this._bind(t);
+          console.log(`Connected to server: ${serverUrl}`);
+          return;
+        } catch (e) {
+          console.log(`Failed to connect to ${serverUrl}: ${(e as Error).message}`);
+          // Continue to next URL
+        }
       }
-      await this._bind(t);
+      this.error = "No available servers. Ensure WebSocket servers are running.";
     } catch (e) { this.error = (e as Error).message; }
   }
 
-  /** Reconnect to an already-granted device without prompting (call on page load). */
-  async autoConnect(url?: string): Promise<void> {
+  /** Auto-connect to configured WebSocket URLs on page load. */
+  async autoConnect(): Promise<void> {
     try {
-      if (url) {
-        // Remote connection mode
-        if (!WebSocketTransport.supported()) throw new Error("WebSocket unavailable");
-        await this._bind(new WebSocketTransport(url));
-        return;
+      if (!WebSocketTransport.supported())
+        throw new Error("WebSocket unavailable");
+
+      // Try to connect to all configured URLs until one succeeds
+      for (const url of webSocketUrls) {
+        try {
+          await this._bind(new WebSocketTransport(url.trim()));
+          console.log(`Auto-connected to: ${url}`);
+          return;
+        } catch (e) {
+          console.log(`Auto-connect failed to ${url}: ${(e as Error).message}`);
+        }
       }
-      if (NativeTransport.supported()) {
-        if (NativeTransport.connected()) await this._bind(new NativeTransport()); // attach intent pre-grants permission
-        return;
-      }
-      await this._bind(await WebHidTransport.existing());
+      this.error = "No available servers";
     } catch (e) { this.error = (e as Error).message; }
   }
 
-  private async _bind(t: WebHidTransport | NativeTransport | WebSocketTransport | null): Promise<void> {
-    if (!t) return;
+  private async _bind(t: WebSocketTransport): Promise<void> {
     await t.open();
     this.dsp = new Dsp(t);
     this.version = await this.dsp.getVersion(); // self-wakes (0x10 then 0x13)
-    this.productName = t.productName;
+    this.productName = t.productName || "DSP 4x4 (remote)";
     this.connected = true;
     this.error = "";
     try { await this.hydrate(); } catch { /* readback is best-effort; UI keeps defaults */ }
     this.startMeters();
 
     // Register with DeviceManager
-    const transportType: 'usb' | 'websocket' = t instanceof WebSocketTransport ? 'websocket' : 'usb';
+    const transportType: 'websocket' = 'websocket';
     deviceManager.connect(this, transportType, {
-      path: (t as WebHidTransport | NativeTransport).productName.includes('path')
-        ? undefined : undefined,
-      url: transportType === 'websocket' ? t.productName : undefined,
+      url: t.url,
       productName: this.productName
     });
   }
 
   /** Public version of _bind for direct transport attachment (e.g., multi-device scenarios) */
-  async bind(t: WebHidTransport | NativeTransport | WebSocketTransport): Promise<void> {
+  async bind(t: WebSocketTransport): Promise<void> {
     await this._bind(t);
   }
 
@@ -391,6 +413,48 @@ export class DeviceStore {
         }
       }
     } finally { this.startMeters(); }
+  }
+
+  // --- JSON Preset Save/Load ---
+  async savePresetToJson(): Promise<void> {
+    const presetData = presetManager.exportCurrentPreset(this);
+    try {
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(presetData);
+      const downloadAnchorNode = document.createElement('a');
+      downloadAnchorNode.setAttribute("href", dataStr);
+      downloadAnchorNode.setAttribute("download", `dsp-preset-${new Date().toISOString().slice(0, 10)}.json`);
+      document.body.appendChild(downloadAnchorNode);
+      downloadAnchorNode.click();
+      downloadAnchorNode.remove();
+    } catch (e) {
+      console.error('Error saving preset:', e);
+      throw new Error(`Failed to save preset: ${(e as Error).message}`);
+    }
+  }
+
+  async loadPresetFromJson(jsonString: string): Promise<void> {
+    try {
+      const parsed = JSON.parse(jsonString);
+      presetManager.importPreset(parsed, this);
+    } catch (e) {
+      console.error('Error loading preset:', e);
+      throw new Error(`Invalid preset data: ${(e as Error).message}`);
+    }
+  }
+
+  // --- Server URL Management ---
+  addServerUrl(url: string): void {
+    if (!webSocketUrls.includes(url)) {
+      webSocketUrls = [...webSocketUrls, url];
+    }
+  }
+
+  removeServerUrl(index: number): void {
+    webSocketUrls = webSocketUrls.filter((_, i) => i !== index);
+  }
+
+  updateServerUrl(index: number, newUrl: string): void {
+    webSocketUrls[index] = newUrl;
   }
 }
 

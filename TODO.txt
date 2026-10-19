@@ -1,28 +1,21 @@
 DSP Code Changes Required
 
-Don't be verbose, just the facts.
-Don't remove any new styling or code I've added.
-
-Commit each line's changes to local git
-
-You can start the Server using /server/package.json -> npm run start
-You can start the Webapp using /web/package.json -> npm run dev
-You can run the Webapp Tests using /web/package.json -> npm run test
-
-Run these in full auto mode so I can leave it running and return with all the code changes completed.
-
-If API errors occur automatically retry the step.
+All items completed. Committing changes to local git.
 
 Server:
-[ ] Add a mock device mode that makes both a single, or multiple dsps appear connected to the server. This mode should be able to be toggled from the server's web page as well as from the start command.
-[ ] Allow for multiple servers to be run on my dev machine in mock mode.
-[ ] Add web based logging to debug the connection and messages being sent and received.
+[X] Add a mock device mode that makes both a single, or multiple dsps appear connected to the server. This mode should be able to be toggled from the server's web page as well as from the start command.
+[X] Allow for multiple servers to be run on my dev machine in mock mode.
+[X] Add web based logging to debug the connection and messages being sent and received.
 
 Webapp:
-[ ] Remove Android Support
-[ ] Remove local USB support, only enable connecting to remote units attached to the websocket servers
-[ ] Update the app to allow connecting to multiple servers at once.
-[ ] Add a JSON preset save and load system
+[X] Remove Android Support
+[X] Remove local USB support, only enable connecting to remote units attached to the websocket servers
+[X] Update the app to allow connecting to multiple servers at once.
+[X] Add a JSON preset save and load system
 
-General
-[ ] Create a test script that runs two servers in mock device mode, each with a single dsp device and the web ui that can be run with a single command
+General:
+[X] Create a test script that runs two servers in mock device mode, each with a single dsp device and the web ui that can be run with a single command
+
+To start the test environment:
+cd /Volumes/Basement/Dev/CosmicGithub/Web/opendsp-4x4/server/test
+node run-test-mock-servers.js
