@@ -110,11 +110,6 @@
     }
   }
 
-  function clearPresets() {
-    if (confirm('Delete all saved presets? This cannot be undone.')) {
-      presetManager.clearAllPresets();
-    }
-  }
 
   // Server URL management
   let newServerUrl = $state("");
