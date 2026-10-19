@@ -113,7 +113,7 @@
 
   // Server URL management
   let newServerUrl = $state("");
-  let showUrlInput = false;
+  let showUrlInput = $state(false);
 
   function addServerUrl() {
     if (newServerUrl.trim()) {

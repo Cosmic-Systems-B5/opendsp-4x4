@@ -337,7 +337,12 @@ wss.on('connection', (ws) => {
   clients.add(ws);
 
   // Register the client for device tracking with path from WebSocket URL if available
-  const urlPath = new URL(ws._socket.remoteAddress ? `http://localhost${ws.upgradeReq.url}` : 'http://localhost').pathname;
+  let urlPath = '/';
+  try {
+    if (ws.upgradeReq && ws.upgradeReq.url) {
+      urlPath = new URL(`http://localhost${ws.upgradeReq.url}`).pathname;
+    }
+  } catch (e) { /* ignore */ }
   registerClient(ws, urlPath);
 
   // If this is the first client, try to connect to HID if not already
