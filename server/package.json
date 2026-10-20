@@ -9,6 +9,7 @@
     "mock": "MOCK_MODE=true node index.js"
   },
   "dependencies": {
+    "dns-sd-browser": "^1.1.0",
     "node-hid": "^3.4.0",
     "ws": "^8.22.0"
   }

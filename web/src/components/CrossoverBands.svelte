@@ -3,18 +3,42 @@
   import { device } from "../state/device.svelte.ts";
   import Param from "./Param.svelte";
   let { index }: { index: number } = $props();
-  const eq = $derived(device.ch(index).eq!);
+
+  function getEq() {
+    return structuredClone(device.ch(index).eq);
+  }
+
+  // Local state for reactive bindings in Svelte 5 runes mode
+  let eq = $state(getEq());
+
+  // Keep local state in sync with device state changes
+  $effect(() => {
+    const newEq = getEq();
+    if (newEq) {
+      eq = newEq;
+    }
+  });
+
   const SLOPES = [
     { v: 0, l: "Bypass" }, { v: 1, l: "BW 6" }, { v: 2, l: "BL 6" }, { v: 3, l: "BW 12" }, { v: 4, l: "BL 12" },
     { v: 5, l: "LR 12" }, { v: 6, l: "BW 18" }, { v: 7, l: "BL 18" }, { v: 8, l: "BW 24" }, { v: 9, l: "BL 24" }, { v: 10, l: "LR 24" },
   ];
   const fHz = (v: number) => (v < 1000 ? v.toFixed(0) : (v / 1000).toFixed(2));
-  const commitHpf = () => device.commitHpf(index);
-  const commitLpf = () => device.commitLpf(index);
+
+  function commitHpf() {
+    device.ch(index).eq!.hpf = { ...eq.hpf };
+    device.commitHpf(index);
+  }
+
+  function commitLpf() {
+    device.ch(index).eq!.lpf = { ...eq.lpf };
+    device.commitLpf(index);
+  }
 
   function slopeSel(e: Event, which: "hpf" | "lpf") {
     eq[which].slope = +(e.currentTarget as HTMLSelectElement).value;
-    which === "hpf" ? commitHpf() : commitLpf();
+    if (which === "hpf") commitHpf();
+    else commitLpf();
   }
 
   function toggleHpfBypass() {

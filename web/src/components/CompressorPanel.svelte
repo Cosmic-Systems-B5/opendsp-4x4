@@ -3,21 +3,39 @@
   import Param from "./Param.svelte";
   import { Ratio } from "../protocol/commands.ts";
   let { index }: { index: number } = $props();
-  const c = $derived(device.ch(index).comp!);
-  const commit = () => device.commitComp(index);
+
+  // Svelte 5 runes mode fix for bind:value with derived values
+  function getComp() {
+    return structuredClone(device.ch(index).comp) as NonNullable<typeof device.channels[0].comp>;
+  }
+
+  let comp = $state(getComp());
+
+  // Keep local state in sync with device state changes
+  $effect(() => {
+    const newComp = getComp();
+    if (newComp) {
+      comp = newComp;
+    }
+  });
+
+  function commit() {
+    device.ch(index).comp = { ...comp };
+    device.commitComp(index);
+  }
 </script>
 
 <div class="panel">
-  <Param label="Threshold" bind:value={c.thresholdDb} min={-90} max={20} step={0.5} unit="dB" onchange={commit} />
+  <Param label="Threshold" bind:value={comp.thresholdDb} min={-90} max={20} step={0.5} unit="dB" onchange={commit} />
   <div class="param">
     <span class="lbl">Ratio</span>
-    <select class="sel" value={c.ratioIndex} onchange={(e) => { c.ratioIndex = +(e.currentTarget as HTMLSelectElement).value; commit(); }}>
+    <select class="sel" value={comp.ratioIndex} onchange={(e) => { comp.ratioIndex = +(e.currentTarget as HTMLSelectElement).value; commit(); }}>
       {#each Ratio as r, i (i)}<option value={i}>{r}</option>{/each}
     </select>
   </div>
-  <Param label="Knee" bind:value={c.kneeDb} min={0} max={12} step={1} unit="dB" onchange={commit} />
-  <Param label="Attack" bind:value={c.attackMs} min={1} max={999} step={1} unit="ms" onchange={commit} />
-  <Param label="Release" bind:value={c.releaseMs} min={10} max={3000} step={10} unit="ms" onchange={commit} />
+  <Param label="Knee" bind:value={comp.kneeDb} min={0} max={12} step={1} unit="dB" onchange={commit} />
+  <Param label="Attack" bind:value={comp.attackMs} min={1} max={999} step={1} unit="ms" onchange={commit} />
+  <Param label="Release" bind:value={comp.releaseMs} min={10} max={3000} step={10} unit="ms" onchange={commit} />
 </div>
 
 <style>

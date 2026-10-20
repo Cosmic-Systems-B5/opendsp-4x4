@@ -14,7 +14,7 @@ export class WebSocketTransport implements DspTransport {
     return typeof WebSocket !== "undefined";
   }
 
-  constructor(private readonly url: string) {}
+  constructor(public readonly url: string) {}
 
   get isOpen(): boolean { return this.ws?.readyState === WebSocket.OPEN; }
   get productName(): string { return "DSP 4x4 (remote)"; }

@@ -2,8 +2,25 @@
   import { device } from "../state/device.svelte.ts";
   import Param from "./Param.svelte";
   let { index }: { index: number } = $props();
-  const ch = $derived(device.ch(index));
-  const commit = () => device.setDelayMs(index, ch.delayMs ?? 0);
+
+  // Svelte 5 runes mode fix for bind:value with derived values
+  function getChannel() {
+    return structuredClone(device.ch(index));
+  }
+
+  let ch = $state(getChannel());
+
+  // Keep local state in sync with device state changes
+  $effect(() => {
+    const newCh = getChannel();
+    if (newCh) {
+      ch = newCh;
+    }
+  });
+
+  function commit() {
+    device.setDelayMs(index, ch.delayMs ?? 0);
+  }
 </script>
 
 <div class="band" style="margin-top: .6rem;">

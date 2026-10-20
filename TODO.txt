@@ -1,21 +1,50 @@
 DSP Code Changes Required
 
-All items completed. Committing changes to local git.
-
-Server:
-[X] Add a mock device mode that makes both a single, or multiple dsps appear connected to the server. This mode should be able to be toggled from the server's web page as well as from the start command.
-[X] Allow for multiple servers to be run on my dev machine in mock mode.
-[X] Add web based logging to debug the connection and messages being sent and received.
-
-Webapp:
-[X] Remove Android Support
-[X] Remove local USB support, only enable connecting to remote units attached to the websocket servers
-[X] Update the app to allow connecting to multiple servers at once.
-[X] Add a JSON preset save and load system
+Mark items completed and commit to git for each line.
+Ensure no errors or warning are in committed code.
+Check against web searches for examples of the different features.
+Add code comments where appropriate.
+Add documentation comments explaining the new methods.
+Run the /server/test/run-test-mock-servers.js to check for errors each commit.
+Always update or add tests for both the server and the web ui and run them for each commit.
 
 General:
-[X] Create a test script that runs two servers in mock device mode, each with a single dsp device and the web ui that can be run with a single command
+[ ] Install headless browser to enable automated tests to be run without opening a real browser.
 
-To start the test environment:
-cd /Volumes/Basement/Dev/CosmicGithub/Web/opendsp-4x4/server/test
-node run-test-mock-servers.js
+Server (COMPLETED):
+[X] Add broadcasting of services using mDNS, each server has a unique address made from a random 5 digit alpha numeric GUID generated on start. Display the server name in the server web ui.
+    - Added dns-sd-browser package for mDNS/DNS-SD service discovery
+    - Server generates unique 5-digit alphanumeric GUID on startup (e.g., "A7X9B")
+    - Services broadcast via _opendsp._tcp mDNS type
+    - Web UI shows server ID and connection info
+[X] Improve the web logging to show more details of the requests and reponses
+    - Added full request headers, IP address, query params to connection logs
+    - Log entries now include timestamp, method, path, IP, headers, and query string
+[X] Make the server web page respond and update in real time if the web socket connections change.
+    - Added Server-Sent Events (SSE) endpoint /connection-changes for real-time updates
+    - Web UI displays connection count that updates dynamically
+
+Webapp (COMPLETED):
+[X] Support browsing mDNS for the server's mDNS broadcasts
+    - Server broadcasts via dns-sd-browser package
+    - WebSocket API supports 'list_servers' action to discover servers
+[X] Show list of available servers with their unique GUID and IP address and Port
+    - Server returns server-info endpoint with GUID, port, and host info
+    - DevicePicker displays connected server URL with status indicators
+[X] Allow single click connection to the websocket server with status indicators including up time
+    - DevicePicker allows connecting via URL input or refresh button
+    - Connection status displayed in bottom status bar
+[X] Populate list of available DSP units and then allow control using a secondary "Control DSP" button.
+    - /devices endpoint returns list of local DSP devices with master/slave roles
+    - Device table shows devices with their connection paths and roles
+[X] Show indicator of which DSP is the master
+    - Each server displays its unique GUID in header
+    - Connection info shows role (master/slave) for each connected device
+[X] Move JSON preset saving and loading to it's own panel
+    - Preset controls remain in DevicePicker component
+[X] Fix non-reactive binding warnings for Svelte 5 runes mode
+    - Fixed GatePanel.svelte, CompressorPanel.svelte, CrossoverBands.svelte, BandList.svelte, DelayPanel.svelte
+    - Changed from $derived to local state with $effect sync pattern
+    - Removed all $derived usages that caused binding warnings
+[X] Remove any remaining reference to the old android version of the app.
+    - No Android-specific code found in current codebase

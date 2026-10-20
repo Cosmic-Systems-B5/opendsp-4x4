@@ -7,7 +7,21 @@
   import Param from "./Param.svelte";
   let { index }: { index: number } = $props();
 
-  const eq = $derived(device.ch(index).eq!);
+  function getEq() {
+    return structuredClone(device.ch(index).eq);
+  }
+
+  // Local state for reactive bindings in Svelte 5 runes mode
+  let eq = $state(getEq());
+
+  // Keep local state in sync with device state changes
+  $effect(() => {
+    const newEq = getEq();
+    if (newEq) {
+      eq = newEq;
+    }
+  });
+
   const TYPES = [
     { v: 0, l: "Peak" }, { v: 1, l: "Lo Shelf" }, { v: 2, l: "Hi Shelf" },
     { v: 3, l: "Lo Pass" }, { v: 4, l: "Hi Pass" }, { v: 5, l: "AllP 1" }, { v: 6, l: "AllP 2" },
@@ -15,8 +29,15 @@
   const bandHue = (i: number) => `hsl(${(i * 51) % 360} 75% 62%)`;
   const fHz = (v: number) => (v < 1000 ? v.toFixed(0) : (v / 1000).toFixed(2));
 
-  const commit = (i: number) => device.commitPeqBand(index, i);
-  const toggleBypass = (i: number) => { eq.bands[i]!.bypass = !eq.bands[i]!.bypass; commit(i); };
+  function commit(i: number) {
+    device.ch(index).eq!.bands[i] = { ...eq.bands[i] };
+    device.commitPeqBand(index, i);
+  }
+
+  function toggleBypass(i: number) {
+    eq.bands[i]!.bypass = !eq.bands[i]!.bypass;
+    commit(i);
+  }
 </script>
 
 <div class="bands">
