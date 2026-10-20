@@ -39,7 +39,7 @@
 </div>
 
 <style>
-  .eq-panel { position: relative; }
+  .eq-panel { position: relative; user-select: none; }
 
   .mode-content {
     display: flex;

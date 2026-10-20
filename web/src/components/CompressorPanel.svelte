@@ -39,8 +39,8 @@
 </div>
 
 <style>
-  .panel { display: flex; gap: .8rem; flex-wrap: wrap; padding: .8rem 0; }
-  .param { display: flex; flex-direction: column; gap: .25rem; width: 100px; }
-  .lbl { font-size: .7rem; color: var(--text-dim); text-align: center; }
-  .sel { height: 64px; background: var(--bg-elev); color: var(--text); border: 1px solid var(--line); border-radius: 8px; font: inherit; text-align: center; }
+  .panel { display: flex; gap: .8rem; flex-wrap: wrap; padding: .8rem 0; user-select: none; }
+  .param { display: flex; flex-direction: column; gap: .25rem; width: 100px; user-select: none; }
+  .lbl { font-size: .7rem; color: var(--text-dim); text-align: center; user-select: none; }
+  .sel { height: 64px; background: var(--bg-elev); color: var(--text); border: 1px solid var(--line); border-radius: 8px; font: inherit; text-align: center; user-select: none; }
 </style>

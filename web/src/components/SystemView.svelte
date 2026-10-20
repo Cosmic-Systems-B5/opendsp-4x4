@@ -1,11 +1,11 @@
 <script lang="ts">
   import DevicePicker from "./DevicePicker.svelte";
-  import DeviceTable from "./DeviceTable.svelte";
+  import PresetPanel from "./PresetPanel.svelte";
 </script>
 
 <div class="system-view">
   <DevicePicker />
-  <DeviceTable />
+  <PresetPanel />
 </div>
 
 <style>

@@ -74,16 +74,16 @@
 
 <style>
   /* one vertical strip per band, spread across the graph width (graphic-EQ style) */
-  .bands { display: flex; gap: .4rem; padding: .6rem 0 0; align-items: flex-start; }
+  .bands { display: flex; gap: .4rem; padding: .6rem 0 0; align-items: flex-start; user-select: none; }
   .band { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: .4rem;
-          padding: .5rem .3rem; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-panel); }
+          padding: .5rem .3rem; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-panel); user-select: none; }
   .band.hpf-byp { opacity: .45; }
   .band.lpf-byp { opacity: .45; }
   .num { width: 40px; height: 30px; padding: 0; border-radius: 6px; border: 2px solid var(--c);
          background: color-mix(in oklab, var(--c) 22%, transparent); color: var(--text); font-weight: 700; font-size: .75rem; cursor: pointer;
-         display: flex; align-items: center; justify-content: center; }
+         display: flex; align-items: center; justify-content: center; user-select: none; }
   .band.hpf-byp .num { background: transparent; border-color: var(--line); }
   .band.lpf-byp .num { background: transparent; border-color: var(--line); }
   .sel { width: 100%; max-width: 88px; background: var(--bg-elev); color: var(--text); border: 1px solid var(--line);
-         border-radius: 6px; font: inherit; font-size: .72rem; padding: .25rem; }
+         border-radius: 6px; font: inherit; font-size: .72rem; padding: .25rem; user-select: none; }
 </style>

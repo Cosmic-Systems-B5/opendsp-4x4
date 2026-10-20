@@ -170,11 +170,11 @@
 
 <style>
   .eq-wrap { display: flex; margin: 0.5rem 0;}
-  .eq { width: 100%; max-width: 900px; height: auto; display: block; background: #0a0d12; border: 1px solid var(--line); border-radius: var(--radius); touch-action: none; }
+  .eq { width: 100%; max-width: 900px; height: auto; display: block; background: #0a0d12; border: 1px solid var(--line); border-radius: var(--radius); touch-action: none; user-select: none; }
   .grid { stroke: #1c2430; stroke-width: 1; }
   .grid.zero { stroke: #344256; }
   .xo { stroke: var(--warn); stroke-dasharray: 3 4; opacity: .5; }
-  .lab { fill: var(--text-dim); font-size: 11px; font-family: ui-monospace, monospace; }
+  .lab { fill: var(--text-dim); font-size: 11px; font-family: ui-monospace, monospace; user-select: none; }
   .sum { fill: none; stroke: var(--accent); stroke-width: 2.5; filter: drop-shadow(0 0 6px rgba(56,189,248,.5)); }
   .sum-extra { opacity: .35; stroke-width: 1.5; stroke: var(--c); filter: none; }
   .handle { fill: var(--c); stroke: #0a0d12; stroke-width: 2; cursor: grab; transition: r .1s; }
