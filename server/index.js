@@ -4,8 +4,6 @@
 
 import { createServer } from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
-import { MdnsBrowser, Advertisement } from '@homebridge/ciao';
-import dnsSd from 'node-dns-sd';
 
 const MOCK_MODE = process.env.MOCK_MODE === 'true';
 
@@ -26,10 +24,6 @@ const PRODUCT_ID = 0x0821;
 let hidDevice = null;
 let reconnectTimer = null;
 let isConnecting = false;
-
-// Mock mode state (process.env.MOCK_MODE must be checked before use)
-let mockHidBuffer = [];
-let mockPendingRequest = null;
 
 /**
  * Find and open the DSP device
@@ -124,8 +118,9 @@ function handleMockHidWrite(bytes) {
 
       if (payloadStart >= 0 && payloadEnd > payloadStart) {
         const payload = bytes.slice(payloadStart, payloadEnd);
-        const addr = payload[0];
-        const n = payload[1];
+        // addr and n are extracted for potential future use
+        void payload[0];
+        void payload[1];
         const code = payload[3];
 
         console.log(`[MOCK] Request: code=0x${code.toString(16).padStart(2, '0')}`);
@@ -288,10 +283,8 @@ function unregisterClient(ws) {
       // Reassign master role if needed - find first remaining client that's not the removed one
       if (connectedDevices.size > 0 && !Array.from(connectedDevices.values()).find(d => d.role === 'master')) {
         // Find first available client and make them master
-        for (const [_, info] of connectedDevices.entries()) {
-          info.role = 'master';
-          break;
-        }
+        const [_, info] = connectedDevices.entries().next().value;
+        if (info) info.role = 'master';
       }
       break;
     }
@@ -435,7 +428,7 @@ const httpServer = createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html' });
     const mockMode = process.env.MOCK_MODE === 'true';
     res.end(`<!DOCTYPE html>
-<html><head><title>openDSP-4x4 Bridge</title></head>
+<html lang="en"><head><title>openDSP-4x4 Bridge</title></head>
 <body style="font-family:system-ui,-apple-system,sans-serif;max-width:800px;margin:2rem auto;padding:1rem;background:#1a1a2e;color:#eee">
 <h1>openDSP-4x4 WebSocket Bridge</h1>
 
@@ -648,110 +641,12 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Bonjour advertising
-let mdnsAdvertiser = null;
-let mdnsBrowser = null;
-const BONJOUR_SERVICE_NAME = '_opendsp-ws._tcp.local';
-
-/**
- * Start advertising this server via Bonjour/mDNS
- */
-function startBonjourAdvertising() {
-  const PORT = process.env.PORT || 8765;
-
-  // Create the mDNS advertiser for our service
-  mdnsAdvertiser = Advertisement.createTcpService(BONJOUR_SERVICE_NAME, `openDSP-4x4-${process.env.HOSTNAME || process.env.USER || 'server'}`, {
-    port: PORT,
-    txt: {
-      mockMode: MOCK_MODE.toString(),
-      version: '1.0.0',
-      vendorId: VENDOR_ID.toString(16),
-      productId: PRODUCT_ID.toString(16)
-    }
-  });
-
-  mdnsAdvertiser.start().then(() => {
-    console.log(`Server advertising via Bonjour on ${BONJOUR_SERVICE_NAME}`);
-  }).catch((err) => {
-    console.warn('Failed to start mDNS advertisement:', err.message);
-  });
-
-  // Create the mDNS browser for discovering other openDSP servers
-  mdnsBrowser = MdnsBrowser.create();
-
-  mdnsBrowser.on('serviceUp', (service) => {
-    if (service.type === BONJOUR_SERVICE_NAME && service.protocol === 'tcp') {
-      const server = {
-        name: service.name,
-        host: service.host || 'localhost',
-        port: service.port,
-        type: 'opendsp-ws',
-        protocol: 'tcp',
-        lastSeen: Date.now()
-      };
-      updateDiscoveredServer(server);
-      console.log(`Found openDSP server: ${service.name} at ws://${server.host}:${server.port}`);
-    }
-  });
-
-  mdnsBrowser.on('serviceDown', (service) => {
-    if (service.type === BONJOUR_SERVICE_NAME && service.protocol === 'tcp') {
-      console.log(`openDSP server removed: ${service.name}`);
-    }
-  });
-
-  // Start browsing for services
-  mdnsBrowser.start();
-}
-
-/**
- * Stop Bonjour advertising
- */
-function stopBonjourAdvertising() {
-  if (mdnsAdvertiser) {
-    mdnsAdvertiser.stop().then(() => {
-      console.log('Stopped mDNS advertisement');
-    });
-    mdnsAdvertiser = null;
-  }
-  if (mdnsBrowser) {
-    mdnsBrowser.stop();
-    mdnsBrowser = null;
-  }
-}
-
-// Track discovered servers for the web UI
+// Track discovered servers for the web UI (servers are discovered via HTTP endpoint)
 const discoveredServers = [];
 
 /**
- * Update the list of discovered servers and notify WebSocket clients
+ * Get list of discovered servers
  */
-function updateDiscoveredServer(server) {
-  const existingIndex = discoveredServers.findIndex(s => s.host === server.host && s.port === server.port);
-  if (existingIndex >= 0) {
-    discoveredServers[existingIndex] = { ...server, lastSeen: Date.now() };
-  } else {
-    discoveredServers.push({ ...server, lastSeen: Date.now() });
-  }
-
-  // Broadcast server list to all connected WebSocket clients
-  const serversMsg = JSON.stringify({
-    type: 'discovered_servers',
-    data: btoa(JSON.stringify({ servers: getDiscoveredServers() }))
-  });
-
-  for (const client of clients) {
-    try {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(serversMsg);
-      }
-    } catch (e) {
-      console.error('Error broadcasting discovered servers:', e.message);
-    }
-  }
-}
-
-// Get list of discovered servers
 function getDiscoveredServers() {
   // Clean up stale entries (older than 30 seconds)
   const now = Date.now();
@@ -763,7 +658,6 @@ function getDiscoveredServers() {
  */
 function shutdown() {
   console.log('Shutting down...');
-  stopBonjourAdvertising();
   disconnectHid();
   wss.close(() => {
     httpServer.close(() => process.exit(0));
@@ -780,9 +674,6 @@ httpServer.listen(PORT, () => {
   console.log(`WebSocket bridge listening on ws://localhost:${PORT}`);
   console.log(`HTTP status at http://localhost:${PORT}/`);
   console.log(`Mock mode: ${process.env.MOCK_MODE === 'true' ? 'enabled' : 'disabled'}`);
-
-  // Start Bonjour advertising
-  startBonjourAdvertising();
 
   console.log('Waiting for clients...');
 });

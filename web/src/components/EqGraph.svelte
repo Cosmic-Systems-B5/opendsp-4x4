@@ -142,7 +142,7 @@
 
 <div class="readout mono">
   {#if active}
-    Band {activeBand! + 1} · {TYPE_NAME[active.type]} · {active.freqHz < 1000 ? active.freqHz.toFixed(0) + " Hz" : (active.freqHz / 1000).toFixed(2) + " kHz"}
+    Band {(activeBand !== undefined ? activeBand : 0) + 1} · {TYPE_NAME[active.type]} · {active.freqHz < 1000 ? active.freqHz.toFixed(0) + " Hz" : (active.freqHz / 1000).toFixed(2) + " kHz"}
     · {active.gainDb >= 0 ? "+" : ""}{active.gainDb.toFixed(1)} dB · {active.bwOct.toFixed(2)} oct {active.bypass ? "· (bypassed)" : ""}
   {:else}
     <span class="muted">drag a band · wheel = bandwidth · double-click = reset · right-click = type</span>

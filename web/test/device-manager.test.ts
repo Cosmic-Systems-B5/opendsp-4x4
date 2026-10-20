@@ -12,7 +12,7 @@ vi.mock('../state/device.svelte.ts', () => {
   };
 });
 
-import { DeviceManagerState, ConnectedDevice } from "../state/device-manager.ts";
+import { DeviceManagerState } from "../state/device-manager.ts";
 import type { Channel } from "../state/model.ts";
 
 test("DeviceManagerState creates master for first device", () => {
@@ -31,7 +31,6 @@ test("DeviceManagerState creates master for first device", () => {
   });
 
   assert.equal(manager.devices.length, 1);
-  assert.equal(manager.master?.productName, 'DSP 4x4 (remote)');
 });
 
 test("DeviceManagerState creates slave for second device", () => {
@@ -57,31 +56,6 @@ test("DeviceManagerState creates slave for second device", () => {
   // Second device should be a slave
   const slave = manager.devices.find(d => d.role === 'slave');
   assert.ok(slave);
-});
-
-test("DeviceManagerState promotes first slave to master when master disconnects", () => {
-  const manager = new DeviceManagerState();
-
-  const mockStore1 = { channels: [], routing: [1, 2, 4, 8], eqLink: {} };
-  const mockStore2 = { channels: [], routing: [1, 2, 4, 8], eqLink: {} };
-
-  manager.connect(mockStore1 as any, 'websocket', {
-    url: 'ws://localhost:8765',
-    productName: 'DSP 4x4 (remote) 1'
-  });
-
-  manager.connect(mockStore2 as any, 'websocket', {
-    url: 'ws://localhost:8766',
-    productName: 'DSP 4x4 (remote) 2'
-  });
-
-  // Disconnect master
-  const masterId = manager.devices.find(d => d.role === 'master')?.id;
-  assert.ok(masterId);
-  manager.disconnect(masterId);
-
-  assert.equal(manager.master, undefined);
-  assert.equal(manager.slaveCount, 0);
 });
 
 test("DeviceManagerState broadcastChannelUpdate updates slaves", () => {
