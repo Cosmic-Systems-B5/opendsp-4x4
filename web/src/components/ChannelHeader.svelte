@@ -26,4 +26,5 @@
   .tgl { flex-shrink: 0; user-select: none; }
   .mode-toggle { flex-shrink: 0; padding: .7rem .5rem; border-radius: 9px; font-size: .6rem; font-family: ui-monospace, monospace; user-select: none; }
   .meter { flex: 1; text-align: right; user-select: none; }
+  .on { background-color: var(--ch-1); color: var(--bg); }
 </style>
