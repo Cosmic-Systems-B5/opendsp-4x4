@@ -1,6 +1,6 @@
 // Preset manager for JSON save/load system
 
-import type { Channel } from "./model.ts";
+import type {Channel} from "./model.ts";
 
 const PRESET_VERSION = "1.0";
 const DEFAULT_PRESET_NAME = "Untitled preset";
@@ -203,15 +203,13 @@ class PresetManager {
       presetName: updates.device?.presetName ?? currentPreset.device.presetName
     };
 
-    const updatedPreset: DspPreset = {
+    this.presets[idx] = {
       id: currentPreset.id,
       version: currentPreset.version,
       name: updates.name ?? currentPreset.name,
       timestamp: updates.timestamp ?? currentPreset.timestamp,
       device: updatedDevice
     };
-
-    this.presets[idx] = updatedPreset;
     this.savePresets();
     this.notify();
     return true;

@@ -30,12 +30,16 @@ export class WebSocketTransport implements DspTransport {
 
       // Define message handler first so we can reference it
       this.messageHandler = (e: MessageEvent) => {
-        if (typeof e.data === "string") {
-          // Base64-encoded binary data
-          const bytes = new Uint8Array(atob(e.data).split("").map((c) => c.charCodeAt(0)));
-          this.handleReport(bytes);
-        } else if (e.data instanceof ArrayBuffer) {
-          this.handleReport(new Uint8Array(e.data));
+        try {
+          if (typeof e.data === "string") {
+            // Base64-encoded binary data - handle gracefully if invalid
+            const bytes = new Uint8Array(atob(e.data).split("").map((c) => c.charCodeAt(0)));
+            this.handleReport(bytes);
+          } else if (e.data instanceof ArrayBuffer) {
+            this.handleReport(new Uint8Array(e.data));
+          }
+        } catch (err) {
+          console.warn(`WebSocket: Failed to parse message data`, err);
         }
       };
 

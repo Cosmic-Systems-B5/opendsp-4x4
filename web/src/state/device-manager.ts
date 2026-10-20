@@ -4,7 +4,6 @@
 
 import { device as defaultDevice } from "./device.svelte.ts";
 import type { Channel } from "./model.ts";
-import type { ChannelEq } from "../eq/types.ts";
 
 export type DeviceRole = 'master' | 'slave';
 

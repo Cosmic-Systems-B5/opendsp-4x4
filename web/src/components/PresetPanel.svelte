@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { device } from "../state/device.svelte.ts";
+  import {device} from "../state/device.svelte.ts";
   import presetManager from "../state/preset-manager.ts";
 
   // Preset name input for saving
@@ -29,8 +29,7 @@
   // Get index of currently loaded preset (matches device.currentPresetId)
   function getCurrentPresetIndex(): number {
     if (!device.currentPresetId) return -1;
-    const idx = presets.findIndex(p => p.id === device.currentPresetId);
-    return idx;
+    return presets.findIndex(p => p.id === device.currentPresetId);
   }
 
   async function clearPresets() {
@@ -202,7 +201,6 @@
   .panel-content { padding: 1rem; }
 
   .preset-panel h3 { margin-top: 0; color: var(--text); font-size: 1rem; }
-  .hint { color: var(--text-dim); font-style: italic; font-size: .85rem; margin-bottom: .75rem; }
 
   .preset-controls { display: flex; gap: .5rem; margin-bottom: 0.75rem; flex-wrap: wrap; align-items: center; }
   .name-input-row { display: flex; gap: .5rem; flex-wrap: wrap; width: 100%; }
@@ -239,7 +237,6 @@
   .button-group { display: flex; gap: .25rem; }
   .button-group button { padding: .25rem .5rem; font-size: .75rem; min-width: 50px; }
 
-  .empty { color: var(--text-dim); font-style: italic; text-align: center; padding: 1.5rem; }
   h4 { margin: .75rem 0 .5rem; color: var(--text); font-size: .9rem; }
 
   /* Saved presets list */

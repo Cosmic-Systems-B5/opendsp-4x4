@@ -8,7 +8,6 @@ import { getLevelsFrame, gainRawToDb } from "../protocol/control.ts";
 import { thresholdRawToDb, samplesToMs, rawToQ, peqIndexToHz } from "../protocol/blocks.ts";
 import { levelsFromReply, reconstructPresetImage, parsePresetImage } from "../protocol/readback.ts";
 import { makeChannels, defaultChannel, OUT_BASE, DEFAULT_BAND_FREQS, type Channel } from "./model.ts";
-import type { ChannelEq } from "../eq/types.ts";
 import { deviceManager } from "./device-manager.ts";
 import presetManager from "./preset-manager.ts";
 
