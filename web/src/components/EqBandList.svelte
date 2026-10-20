@@ -4,7 +4,12 @@
   // commit path, so the graph and these stay in sync.
   import { device } from "../state/device.svelte.ts";
   import { DEFAULT_BAND_FREQS } from "../state/model.ts";
+
+  import CrossoverBands from "./CrossoverBands.svelte";
+  import DelayPanel from "./DelayPanel.svelte";
   import Param from "./Param.svelte";
+
+
   let { index }: { index: number } = $props();
 
   function getEq() {
@@ -52,6 +57,11 @@
       <Param label="BW" bind:value={b.bwOct} min={0.05} max={4} step={0.05} unit="oct" reset={1} onchange={() => commit(i)} />
     </div>
   {/each}
+</div>
+
+<div class="eq-panel">
+  <CrossoverBands index={index} />
+  <DelayPanel index={index} />
 </div>
 
 <style>

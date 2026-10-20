@@ -6,13 +6,18 @@
 
   // Show outputs 1, 2, 3 (indices 4, 5, 6)
   const OUT_indices = [OUT_BASE + 0, OUT_BASE + 1, OUT_BASE + 2];
+
+  // Create allEqs array reactively - this will update when any channel changes
+  let allEqs = $state(
+    OUT_indices.map(i => ({ ch: device.ch(i), color: `var(--ch-${i})` }))
+  );
 </script>
 
 <div class="tuning-view">
   {#each OUT_indices as outIndex (outIndex)}
     <OutputTuning
       index={outIndex}
-      allEqs={OUT_indices.map(i => ({ ch: device.ch(i), color: `var(--ch-${i})` }))}
+      allEqs={allEqs}
     />
   {/each}
 </div>

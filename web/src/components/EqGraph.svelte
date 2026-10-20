@@ -1,40 +1,54 @@
 <script lang="ts">
+  import { device } from "../state/device.svelte.ts";
+  import { DEFAULT_BAND_FREQS } from "../state/model.ts";
+
   import { logFreqAxis, summedResponseDb } from "../eq/response.ts";
   import { makeScales } from "../eq/scales.ts";
   import type { ChannelEq } from "../eq/types.ts";
   import { PeqType } from "../protocol/commands.ts";
-  import { DEFAULT_BAND_FREQS } from "../state/model.ts";
 
-  let { eq = $bindable(), index, onCommit = () => {}, showReadout = true, eqMode = "peq", extraEqs = [] }: {
-    eq?: ChannelEq;
-    index?: number;
-    onCommit?: (kind: "band" | "hpf" | "lpf", index?: number) => void;
-    showReadout?: boolean;
-    eqMode?: "peq" | "geq";
+  // let { eq = $bindable(), index, onCommit = () => {}, showReadout = true, eqMode = "peq", extraEqs = [] }: {
+  //   eq?: ChannelEq;
+  //   index?: number;
+  //   onCommit?: (kind: "band" | "hpf" | "lpf", index?: number) => void;
+  //   showReadout?: boolean;
+  //   eqMode?: "peq" | "geq";
+  //   extraEqs?: { eq: ChannelEq; color: string }[];
+  // } = $props();
+
+  let { index, extraEqs }: {
+    index: number;
     extraEqs?: { eq: ChannelEq; color: string }[];
   } = $props();
+
+  function getEq() {
+    return $state.snapshot(device.ch(index).eq);
+  }
+
+  // Local state for reactive bindings in Svelte 5 runes mode
+  let eq = $state(getEq());
+
+  // Keep local state in sync with device state changes
+  $effect(() => {
+    const newEq = getEq();
+    if (newEq) {
+      eq = newEq;
+    }
+  });
 
   const W = 760, H = 290, DB = 18;
   const scales = makeScales(W, H, 20, 20000, DB);
   const freqs = logFreqAxis(280, 20, 20000);
 
-  // Use eq prop if provided (for binding), otherwise derive from device
-  function getEq(): ChannelEq {
-    return $state.snapshot(eq !== undefined ? eq : device.ch(index!).eq!);
-  }
-
   let svgEl: SVGSVGElement;
   let activeBand = $state<number | null>(null);
   let drag = $state<{ kind: "band" | "hpf" | "lpf"; i: number } | null>(null);
-
-  // Local state for eq - either bound from parent or derived from device
-  let eqState = $state(getEq());
 
   // Keep local state in sync with changes (from binding or device)
   $effect(() => {
     const newEq = getEq();
     if (newEq) {
-      eqState = newEq;
+      eq = newEq;
     }
   });
 
@@ -42,6 +56,17 @@
   const clampDb = (db: number) => Math.max(-DB, Math.min(DB, db));
   const bandHue = (i: number) => `hsl(${(i * 51) % 360} 75% 62%)`;
   const TYPE_NAME = ["Peak", "LoShelf", "HiShelf", "LoPass", "HiPass", "AllP1", "AllP2"];
+
+  // function commit(i: number) {
+  //   device.ch(index).eq!.bands[i] = { ...eq.bands[i] };
+  //   device.commitPeqBand(index, i);
+  // }
+
+  function commit(kind: "band" | "hpf" | "lpf", band?: number) {
+    if (kind === "band" && band != null) device.commitPeqBand(index, band);
+    else if (kind === "hpf") device.commitHpf(index);
+    else device.commitLpf(index);
+  }
 
   function toPath(f: Float64Array, db: Float64Array): string {
     let d = "";
@@ -55,11 +80,11 @@
     return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
   }
 
-  const sumPath = $derived(toPath(freqs, summedResponseDb(eqState, freqs)));
-  const handles = $derived(eqState.bands.map((b, i) => ({ i, b, x: scales.freqToX(b.freqHz), y: scales.dbToY(clampDb(b.gainDb)) })));
-  const hpfX = $derived(scales.freqToX(eqState.hpf.freqHz));
-  const lpfX = $derived(scales.freqToX(eqState.lpf.freqHz));
-  const active = $derived(activeBand != null ? eqState.bands[activeBand]! : null);
+  const sumPath = $derived(toPath(freqs, summedResponseDb(eq, freqs)));
+  const handles = $derived(eq.bands.map((b, i) => ({ i, b, x: scales.freqToX(b.freqHz), y: scales.dbToY(clampDb(b.gainDb)) })));
+  const hpfX = $derived(scales.freqToX(eq.hpf.freqHz));
+  const lpfX = $derived(scales.freqToX(eq.lpf.freqHz));
+  const active = $derived(activeBand != null ? eq.bands[activeBand]! : null);
 
   function startDrag(kind: "band" | "hpf" | "lpf", i: number, e: PointerEvent) {
     e.preventDefault();
@@ -68,34 +93,42 @@
   }
   function onMove(e: PointerEvent) {
     if (!drag) return;
+    if (!eq) {
+      console.log("eq missing")
+      return;
+    }
     const { x, y } = toVb(e);
     const fHz = clampHz(scales.xToFreq(x));
     if (drag.kind === "band") {
-      const b = eqState.bands[drag.i]!;
+      const b = eq.bands[drag.i]!;
       b.freqHz = fHz; b.gainDb = clampDb(scales.yToDb(y)); b.bypass = false;
     } else {
-      eqState[drag.kind].freqHz = fHz;
+      eq[drag.kind].freqHz = fHz;
     }
-    onCommit?.(drag.kind, drag.kind === "band" ? drag.i : undefined);
+    commit?.(drag.kind, drag.kind === "band" ? drag.i : undefined);
   }
   function onWheel(e: WheelEvent) {
     if (activeBand == null) return;
+    if (!eq) {
+      console.log("eq missing")
+      return;
+    }
     e.preventDefault();
-    const b = eqState.bands[activeBand]!;
+    const b = eq.bands[activeBand]!;
     b.bwOct = Math.max(0.05, Math.min(4, b.bwOct * Math.exp(e.deltaY * 0.0012)));
-    onCommit?.("band", activeBand);
+    commit?.("band", activeBand);
   }
   function resetBand(i: number) {
-    const b = eqState.bands[i]!;
+    const b = eq.bands[i]!;
     b.freqHz = DEFAULT_BAND_FREQS[i] ?? 1000; b.gainDb = 0; b.bwOct = 1; b.type = PeqType.PEAK; b.bypass = false;
-    onCommit?.("band", i);
+    commit?.("band", i);
   }
-  function cycleType(i: number, e: MouseEvent) { e.preventDefault(); const b = eqState.bands[i]!; b.type = (b.type + 1) % 7; onCommit?.("band", i); }
+  function cycleType(i: number, e: MouseEvent) { e.preventDefault(); const b = eq.bands[i]!; b.type = (b.type + 1) % 7; commit?.("band", i); }
 
   $effect(() => {
     if (!drag) return;
     const mv = (e: PointerEvent) => onMove(e);
-    const up = () => { if (drag) { onCommit?.(drag.kind, drag.kind === "band" ? drag.i : undefined); drag = null; } };
+    const up = () => { if (drag) { commit?.(drag.kind, drag.kind === "band" ? drag.i : undefined); drag = null; } };
     window.addEventListener("pointermove", mv);
     window.addEventListener("pointerup", up);
     return () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); };
@@ -118,10 +151,11 @@
   {/each}
 
   <!-- crossover cutoff markers -->
-  {#if eqState.hpf.slope !== 0}<line class="xo" x1={hpfX} y1="0" x2={hpfX} y2={H} />{/if}
-  {#if eqState.lpf.slope !== 0}<line class="xo" x1={lpfX} y1="0" x2={lpfX} y2={H} />{/if}
+  {#if eq && eq.hpf.slope !== 0}<line class="xo" x1={hpfX} y1="0" x2={hpfX} y2={H} />{/if}
+  {#if eq && eq.lpf.slope !== 0}<line class="xo" x1={lpfX} y1="0" x2={lpfX} y2={H} />{/if}
 
   <!-- extra EQ curves (read-only, display only) -->
+  {#if extraEqs != undefined}
   {#each extraEqs as extra (extra.eq)}
     <path
       class="sum sum-extra"
@@ -129,6 +163,7 @@
       style="--c:{extra.color}"
     />
   {/each}
+  {/if}
 
   <!-- primary summed response -->
   <path class="sum" d={sumPath} />
@@ -150,22 +185,22 @@
   {/each}
 
   <!-- crossover handles (X only, at base) -->
-  {#if eqState.hpf.slope !== 0}
+  {#if eq && eq.hpf.slope !== 0}
     <rect class="xohandle" x={hpfX - 6} y={H - 16} width="12" height="12" rx="2" onpointerdown={(e) => startDrag("hpf", 0, e)} role="button" aria-label="HPF crossover handle" tabindex={0} />
   {/if}
-  {#if eqState.lpf.slope !== 0}
+  {#if eq && eq.lpf.slope !== 0}
     <rect class="xohandle" x={lpfX - 6} y={H - 16} width="12" height="12" rx="2" onpointerdown={(e) => startDrag("lpf", 0, e)} role="button" aria-label="LPF crossover handle" tabindex={0} />
   {/if}
 </svg>
 
-<div class="readout mono">
-  {#if active}
-    Band {(activeBand !== undefined ? activeBand : 0) + 1} · {TYPE_NAME[active.type]} · {active.freqHz < 1000 ? active.freqHz.toFixed(0) + " Hz" : (active.freqHz / 1000).toFixed(2) + " kHz"}
-    · {active.gainDb >= 0 ? "+" : ""}{active.gainDb.toFixed(1)} dB · {active.bwOct.toFixed(2)} oct {active.bypass ? "· (bypassed)" : ""}
-  {:else}
-    <span class="muted">drag a band · wheel = bandwidth · double-click = reset · right-click = type</span>
-  {/if}
-</div>
+<!--<div class="readout mono">-->
+<!--  {#if active}-->
+<!--    Band {(activeBand !== undefined ? activeBand : 0) + 1} · {TYPE_NAME[active.type]} · {active.freqHz < 1000 ? active.freqHz.toFixed(0) + " Hz" : (active.freqHz / 1000).toFixed(2) + " kHz"}-->
+<!--    · {active.gainDb >= 0 ? "+" : ""}{active.gainDb.toFixed(1)} dB · {active.bwOct.toFixed(2)} oct {active.bypass ? "· (bypassed)" : ""}-->
+<!--  {:else}-->
+<!--    <span class="muted">drag a band · wheel = bandwidth · double-click = reset · right-click = type</span>-->
+<!--  {/if}-->
+<!--</div>-->
 </div>
 
 <style>
@@ -176,7 +211,7 @@
   .xo { stroke: var(--warn); stroke-dasharray: 3 4; opacity: .5; }
   .lab { fill: var(--text-dim); font-size: 11px; font-family: ui-monospace, monospace; user-select: none; }
   .sum { fill: none; stroke: var(--accent); stroke-width: 2.5; filter: drop-shadow(0 0 6px rgba(56,189,248,.5)); }
-  .sum-extra { opacity: .35; stroke-width: 1.5; stroke: var(--c); filter: none; }
+  .sum-extra { opacity: .33; stroke-width: 1; filter: none; }
   .handle { fill: var(--c); stroke: #0a0d12; stroke-width: 2; cursor: grab; transition: r .1s; }
   .handle.active { stroke: #fff; filter: drop-shadow(0 0 6px var(--c)); }
   .handle.bypass { opacity: .3; }

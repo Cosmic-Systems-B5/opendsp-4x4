@@ -41,8 +41,8 @@
     <p class="hint">Save and load device configurations as JSON files.</p>
 
     <div class="preset-controls">
-      <button onclick={savePreset} disabled={!device.connected}>
-        {#if device.connected}💾 Save Preset{:else}Connect to Save{/if}
+      <button onclick={savePreset}>
+        Save Preset
       </button>
       <label class="primary-btn">
         📂 Load Preset

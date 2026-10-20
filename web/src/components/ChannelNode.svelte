@@ -9,7 +9,6 @@
   import EqPanel from "./EqPanel.svelte";
   import CompressorPanel from "./CompressorPanel.svelte";
   import DelayPanel from "./DelayPanel.svelte";
-  import EqTools from "./EqTools.svelte";
 
   let { index }: { index: number } = $props();
   const ch = $derived(device.ch(index));
@@ -27,7 +26,6 @@
       <EqPanel index={index} bind:eq={ch.eq} />
       <details><summary>Compressor</summary><CompressorPanel index={index} /></details>
       <details><summary>Delay</summary><DelayPanel index={index} /></details>
-      <details><summary>Copy / Link EQ</summary><EqTools index={index} /></details>
     {:else}
       <details><summary>Gate</summary><GatePanel index={index} /></details>
     {/if}

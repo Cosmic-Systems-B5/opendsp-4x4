@@ -19,7 +19,7 @@
 </script>
 
 <header class="top">
-  <strong>openDSP-4x4</strong><span class="muted"> · t.racks DSP 4x4 Mini Pro</span>
+  <strong>cosmicDSP-4x4</strong>
   <div class="view-toggle">
     <button class="view-btn" class:active={viewMode === "tuning"} onclick={() => (viewMode = "tuning")}>Tuning</button>
     <button class="view-btn" class:active={viewMode === "routing"} onclick={() => (viewMode = "routing")}>Routing</button>
@@ -45,7 +45,7 @@
 {/if}
 
 <footer class="agpl muted">
-  openDSP-4x4 · <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0</a> ·
+  a cosmic mutation of openDSP-4x4 · <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0</a> ·
   <a href="https://github.com/GlassOnTin/opendsp-4x4">source</a> ·
   <a href="https://ko-fi.com/glassontin">Ko-fi ☕</a> · not affiliated with Thomann
 </footer>

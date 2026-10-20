@@ -321,6 +321,7 @@ export class DeviceStore {
 
   // --- EQ (commit reads the already-mutated band; UI mutates eq directly for instant draw) ---
   commitPeqBand(i: number, band: number): void {
+    console.log(i, band)
     this.sendPeqBand(i, band);
     const p = this.eqLink[i];
     if (p !== undefined && this.ch(p).eq) {
