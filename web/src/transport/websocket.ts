@@ -32,9 +32,13 @@ export class WebSocketTransport implements DspTransport {
       this.messageHandler = (e: MessageEvent) => {
         try {
           if (typeof e.data === "string") {
-            // Base64-encoded binary data - handle gracefully if invalid
-            const bytes = new Uint8Array(atob(e.data).split("").map((c) => c.charCodeAt(0)));
-            this.handleReport(bytes);
+            // Server sends JSON with type and data fields
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'report' && typeof msg.data === 'string') {
+              // Base64-encoded binary data - handle gracefully if invalid
+              const bytes = new Uint8Array(atob(msg.data).split("").map((c) => c.charCodeAt(0)));
+              this.handleReport(bytes);
+            }
           } else if (e.data instanceof ArrayBuffer) {
             this.handleReport(new Uint8Array(e.data));
           }
