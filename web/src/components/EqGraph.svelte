@@ -7,15 +7,6 @@
   import type { ChannelEq } from "../eq/types.ts";
   import { PeqType } from "../protocol/commands.ts";
 
-  // let { eq = $bindable(), index, onCommit = () => {}, showReadout = true, eqMode = "peq", extraEqs = [] }: {
-  //   eq?: ChannelEq;
-  //   index?: number;
-  //   onCommit?: (kind: "band" | "hpf" | "lpf", index?: number) => void;
-  //   showReadout?: boolean;
-  //   eqMode?: "peq" | "geq";
-  //   extraEqs?: { eq: ChannelEq; color: string }[];
-  // } = $props();
-
   let { index, extraEqs }: {
     index: number;
     extraEqs?: { eq: ChannelEq; color: string }[];
@@ -27,14 +18,6 @@
 
   // Local state for reactive bindings in Svelte 5 runes mode
   let eq = $state(getEq());
-
-  // Keep local state in sync with device state changes
-  $effect(() => {
-    const newEq = getEq();
-    if (newEq) {
-      eq = newEq;
-    }
-  });
 
   const W = 760, H = 290, DB = 18;
   const scales = makeScales(W, H, 20, 20000, DB);
@@ -57,15 +40,18 @@
   const bandHue = (i: number) => `hsl(${(i * 51) % 360} 75% 62%)`;
   const TYPE_NAME = ["Peak", "LoShelf", "HiShelf", "LoPass", "HiPass", "AllP1", "AllP2"];
 
-  // function commit(i: number) {
-  //   device.ch(index).eq!.bands[i] = { ...eq.bands[i] };
-  //   device.commitPeqBand(index, i);
-  // }
-
   function commit(kind: "band" | "hpf" | "lpf", band?: number) {
-    if (kind === "band" && band != null) device.commitPeqBand(index, band);
-    else if (kind === "hpf") device.commitHpf(index);
-    else device.commitLpf(index);
+    // Copy local eq state back to device before committing
+    if (kind === "band" && band != null) {
+      device.ch(index).eq!.bands[band] = { ...eq.bands[band] };
+      device.commitPeqBand(index, band);
+    } else if (kind === "hpf") {
+      device.ch(index).eq!.hpf = { ...eq.hpf };
+      device.commitHpf(index);
+    } else {
+      device.ch(index).eq!.lpf = { ...eq.lpf };
+      device.commitLpf(index);
+    }
   }
 
   function toPath(f: Float64Array, db: Float64Array): string {
@@ -192,15 +178,6 @@
     <rect class="xohandle" x={lpfX - 6} y={H - 16} width="12" height="12" rx="2" onpointerdown={(e) => startDrag("lpf", 0, e)} role="button" aria-label="LPF crossover handle" tabindex={0} />
   {/if}
 </svg>
-
-<!--<div class="readout mono">-->
-<!--  {#if active}-->
-<!--    Band {(activeBand !== undefined ? activeBand : 0) + 1} · {TYPE_NAME[active.type]} · {active.freqHz < 1000 ? active.freqHz.toFixed(0) + " Hz" : (active.freqHz / 1000).toFixed(2) + " kHz"}-->
-<!--    · {active.gainDb >= 0 ? "+" : ""}{active.gainDb.toFixed(1)} dB · {active.bwOct.toFixed(2)} oct {active.bypass ? "· (bypassed)" : ""}-->
-<!--  {:else}-->
-<!--    <span class="muted">drag a band · wheel = bandwidth · double-click = reset · right-click = type</span>-->
-<!--  {/if}-->
-<!--</div>-->
 </div>
 
 <style>
