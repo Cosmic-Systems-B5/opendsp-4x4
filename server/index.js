@@ -57,8 +57,6 @@ async function connectHid() {
   } catch (err) {
     console.error(`HID connect failed: ${err.message}`);
     disconnectHid();
-  } finally {
-    isConnecting = false;
   }
 }
 
@@ -464,7 +462,7 @@ document.getElementById('toggleMock').onclick = async () => {
   if (res.ok) location.reload();
 };
 document.getElementById('clearLogs').onclick = async () => {
-  connectionLogs = [];
+  connectionLogs.length = 0;
   document.getElementById('logs').innerHTML = '<p class="empty">Logs cleared</p>';
 };
 

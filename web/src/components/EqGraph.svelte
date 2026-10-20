@@ -89,7 +89,7 @@
   const fLabel = (f: number) => (f >= 1000 ? `${f / 1000}k` : `${f}`);
 </script>
 <div class="eq-wrap">
-<svg bind:this={svgEl} viewBox="0 0 {W} {H}" class="eq" onwheel={onWheel} role="img" aria-label="EQ response">
+<svg bind:this={svgEl} viewBox="0 0 {W} {H}" class="eq" on:wheel={onWheel} role="img" aria-label="EQ response">
   <!-- grid -->
   {#each GRID_F as f}
     <line class="grid" x1={scales.freqToX(f)} y1="0" x2={scales.freqToX(f)} y2={H} />
@@ -122,9 +122,9 @@
       class="handle" class:active={activeBand === h.i} class:bypass={h.b.bypass}
       cx={h.x} cy={h.y} r={activeBand === h.i ? 9 : 7}
       style="--c:{bandHue(h.i)}"
-      onpointerdown={(e) => startDrag("band", h.i, e)}
-      ondblclick={() => resetBand(h.i)}
-      oncontextmenu={(e) => cycleType(h.i, e)}
+      on:pointerdown={(e) => startDrag("band", h.i, e)}
+      on:dblclick={() => resetBand(h.i)}
+      on:contextmenu={(e) => cycleType(h.i, e)}
       role="button"
       aria-label={`Band ${h.i + 1} handle`}
     />
@@ -133,10 +133,10 @@
 
   <!-- crossover handles (X only, at base) -->
   {#if eq.hpf.slope !== 0}
-    <rect class="xohandle" x={hpfX - 6} y={H - 16} width="12" height="12" rx="2" onpointerdown={(e) => startDrag("hpf", 0, e)} role="button" aria-label="HPF crossover handle" />
+    <rect class="xohandle" x={hpfX - 6} y={H - 16} width="12" height="12" rx="2" on:pointerdown={(e) => startDrag("hpf", 0, e)} role="button" aria-label="HPF crossover handle" />
   {/if}
   {#if eq.lpf.slope !== 0}
-    <rect class="xohandle" x={lpfX - 6} y={H - 16} width="12" height="12" rx="2" onpointerdown={(e) => startDrag("lpf", 0, e)} role="button" aria-label="LPF crossover handle" />
+    <rect class="xohandle" x={lpfX - 6} y={H - 16} width="12" height="12" rx="2" on:pointerdown={(e) => startDrag("lpf", 0, e)} role="button" aria-label="LPF crossover handle" />
   {/if}
 </svg>
 

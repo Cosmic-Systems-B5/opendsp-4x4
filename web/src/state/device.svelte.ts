@@ -63,46 +63,46 @@ export class DeviceStore {
   /** Connect via WebSocket to remote DSP servers only.
    *  Attempts to connect to configured URLs in order until one succeeds. */
   async connect(url?: string): Promise<void> {
-    try {
-      if (!WebSocketTransport.supported())
-        throw new Error("WebSocket unavailable");
+    if (!WebSocketTransport.supported()) {
+      this.error = "WebSocket unavailable";
+      return;
+    }
 
-      // Use provided URL or try all configured URLs
-      const urlsToTry = url ? [url] : webSocketUrls;
+    // Use provided URL or try all configured URLs
+    const urlsToTry = url ? [url] : webSocketUrls;
 
-      for (const serverUrl of urlsToTry) {
-        try {
-          const t = new WebSocketTransport(serverUrl.trim());
-          await this._bind(t);
-          console.log(`Connected to server: ${serverUrl}`);
-          return;
-        } catch (e) {
-          console.log(`Failed to connect to ${serverUrl}: ${(e as Error).message}`);
-          // Continue to next URL
-        }
+    for (const serverUrl of urlsToTry) {
+      try {
+        const t = new WebSocketTransport(serverUrl.trim());
+        await this._bind(t);
+        console.log(`Connected to server: ${serverUrl}`);
+        return;
+      } catch (e) {
+        console.log(`Failed to connect to ${serverUrl}: ${(e as Error).message}`);
+        // Continue to next URL
       }
-      this.error = "No available servers. Ensure WebSocket servers are running.";
-    } catch (e) { this.error = (e as Error).message; }
+    }
+    this.error = "No available servers. Ensure WebSocket servers are running.";
   }
 
   /** Auto-connect to configured WebSocket URLs on page load. */
   async autoConnect(): Promise<void> {
-    try {
-      if (!WebSocketTransport.supported())
-        throw new Error("WebSocket unavailable");
+    if (!WebSocketTransport.supported()) {
+      this.error = "WebSocket unavailable";
+      return;
+    }
 
-      // Try to connect to all configured URLs until one succeeds
-      for (const url of webSocketUrls) {
-        try {
-          await this._bind(new WebSocketTransport(url.trim()));
-          console.log(`Auto-connected to: ${url}`);
-          return;
-        } catch (e) {
-          console.log(`Auto-connect failed to ${url}: ${(e as Error).message}`);
-        }
+    // Try to connect to all configured URLs until one succeeds
+    for (const url of webSocketUrls) {
+      try {
+        await this._bind(new WebSocketTransport(url.trim()));
+        console.log(`Auto-connected to: ${url}`);
+        return;
+      } catch (e) {
+        console.log(`Auto-connect failed to ${url}: ${(e as Error).message}`);
       }
-      this.error = "No available servers";
-    } catch (e) { this.error = (e as Error).message; }
+    }
+    this.error = "No available servers";
   }
 
   private async _bind(t: WebSocketTransport): Promise<void> {

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount, onCleanup } from 'svelte';
   import { device, deviceManager } from "../state/device.svelte.ts";
   import presetManager from "../state/preset-manager.ts";
 
