@@ -5,7 +5,7 @@
 
   // Svelte 5 runes mode fix for bind:value with derived values
   function getChannel() {
-    return structuredClone(device.ch(index));
+    return $state.snapshot(device.ch(index));
   }
 
   let ch = $state(getChannel());

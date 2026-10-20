@@ -32,20 +32,20 @@ function saveWebSocketUrls(urls: string[]): void {
 }
 
 // Store for WebSocket URLs
-let webSocketUrls = loadWebSocketUrls();
+let webSocketUrls = $state<string[]>(loadWebSocketUrls());
 
 export class DeviceStore {
-  connected = false;
-  productName = "";
-  version = "";
-  error = "";
-  presetName = "";
-  activePreset = -1; // last-recalled preset slot (highlights its pad); -1 = unknown on connect
-  hasDefaults = typeof localStorage !== "undefined" && localStorage.getItem(DEFAULTS_KEY) !== null;
-  channels: Channel[] = makeChannels();
-  routing: number[] = [0x01, 0x02, 0x04, 0x08]; // Out1..4 input masks (default diagonal)
-  selected = -1; // selected channel index; -1 = nothing open (collapsed overview on load)
-  eqLink: Record<number, number> = {}; // output index -> linked partner (symmetric); EQ edits mirror
+  connected = $state(false);
+  productName = $state("");
+  version = $state("");
+  error = $state("");
+  presetName = $state("");
+  activePreset = $state(-1); // last-recalled preset slot (highlights its pad); -1 = unknown on connect
+  hasDefaults = $state(typeof localStorage !== "undefined" && localStorage.getItem(DEFAULTS_KEY) !== null);
+  channels = $state<Channel[]>(makeChannels());
+  routing = $state<number[]>([0x01, 0x02, 0x04, 0x08]); // Out1..4 input masks (default diagonal)
+  selected = $state(-1); // selected channel index; -1 = nothing open (collapsed overview on load)
+  eqLink = $state<Record<number, number>>({}); // output index -> linked partner (symmetric); EQ edits mirror
   role: DeviceRole = 'master'; // set by DeviceManager when multi-device is active
 
   private dsp: Dsp | null = null;
@@ -293,10 +293,31 @@ export class DeviceStore {
   }
 
   // --- channel basics ---
-  setGainDb(i: number, db: number): void { this.ch(i).gainDb = db; this.commit(`gain${i}`, () => this.dsp!.setLevelDb(i, db)); }
-  setMute(i: number, on: boolean): void { this.ch(i).mute = on; this.commit(`mute${i}`, () => this.dsp!.mute(i, on), 0); }
-  setPolarity(i: number, inv: boolean): void { this.ch(i).polarity = inv; this.commit(`pol${i}`, () => this.dsp!.setPolarity(i, inv), 0); }
-  toggleEqMode(i: number): void { const ch = this.ch(i); if (ch.eq) ch.eqMode = ch.eqMode === "geq" ? "peq" : "geq"; }
+  setGainDb(i: number, db: number): void {
+    const ch = this.ch(i);
+    ch.gainDb = db;
+    this.channels = [...this.channels];
+    this.commit(`gain${i}`, () => this.dsp!.setLevelDb(i, db));
+  }
+  setMute(i: number, on: boolean): void {
+    const ch = this.ch(i);
+    ch.mute = on;
+    this.channels = [...this.channels];
+    this.commit(`mute${i}`, () => this.dsp!.mute(i, on), 0);
+  }
+  setPolarity(i: number, inv: boolean): void {
+    const ch = this.ch(i);
+    ch.polarity = inv;
+    this.channels = [...this.channels];
+    this.commit(`pol${i}`, () => this.dsp!.setPolarity(i, inv), 0);
+  }
+  toggleEqMode(i: number): void {
+    const ch = this.ch(i);
+    if (ch.eq) {
+      ch.eqMode = ch.eqMode === "geq" ? "peq" : "geq";
+      this.channels = [...this.channels];
+    }
+  }
 
   // --- EQ (commit reads the already-mutated band; UI mutates eq directly for instant draw) ---
   commitPeqBand(i: number, band: number): void {
@@ -304,6 +325,7 @@ export class DeviceStore {
     const p = this.eqLink[i];
     if (p !== undefined && this.ch(p).eq) {
       Object.assign(this.ch(p).eq!.bands[band]!, { ...this.ch(i).eq!.bands[band]! });
+      this.channels = [...this.channels];
       this.sendPeqBand(p, band);
     }
   }
@@ -314,8 +336,24 @@ export class DeviceStore {
       gainRaw: this.cal.peqGainDbToRaw(b.gainDb, b.type), type: b.type, bypass: b.bypass,
     }));
   }
-  commitHpf(i: number): void { this.sendHpf(i); const p = this.eqLink[i]; if (p !== undefined && this.ch(p).eq) { this.ch(p).eq!.hpf = { ...this.ch(i).eq!.hpf! }; this.sendHpf(p); } }
-  commitLpf(i: number): void { this.sendLpf(i); const p = this.eqLink[i]; if (p !== undefined && this.ch(p).eq) { this.ch(p).eq!.lpf = { ...this.ch(i).eq!.lpf! }; this.sendLpf(p); } }
+  commitHpf(i: number): void {
+    this.sendHpf(i);
+    const p = this.eqLink[i];
+    if (p !== undefined && this.ch(p).eq) {
+      this.ch(p).eq!.hpf = { ...this.ch(i).eq!.hpf! };
+      this.channels = [...this.channels];
+      this.sendHpf(p);
+    }
+  }
+  commitLpf(i: number): void {
+    this.sendLpf(i);
+    const p = this.eqLink[i];
+    if (p !== undefined && this.ch(p).eq) {
+      this.ch(p).eq!.lpf = { ...this.ch(i).eq!.lpf! };
+      this.channels = [...this.channels];
+      this.sendLpf(p);
+    }
+  }
   private sendHpf(i: number): void { const x = this.ch(i).eq!.hpf; this.commit(`hpf${i}`, () => this.dsp!.crossoverHpf(i, this.cal.xoverHzToRaw(x.freqHz), x.slope)); }
   private sendLpf(i: number): void { const x = this.ch(i).eq!.lpf; this.commit(`lpf${i}`, () => this.dsp!.crossoverLpf(i, this.cal.xoverHzToRaw(x.freqHz), x.slope)); }
 
@@ -323,6 +361,7 @@ export class DeviceStore {
   resetBand(i: number, band: number): void {
     const b = this.ch(i).eq!.bands[band]!;
     b.freqHz = DEFAULT_BAND_FREQS[band] ?? 1000; b.gainDb = 0; b.bwOct = 1; b.type = 0; b.bypass = false;
+    this.channels = [...this.channels];
     this.commitPeqBand(i, band);
   }
   /** Copy a whole channel's EQ (7 bands + crossover) to another output and push it. */
@@ -351,10 +390,27 @@ export class DeviceStore {
   }
 
   // --- dynamics / delay / routing ---
-  setDelayMs(i: number, ms: number): void { this.ch(i).delayMs = ms; this.commit(`delay${i}`, () => this.dsp!.delayMs(i, ms)); }
-  commitComp(i: number): void { const c = this.ch(i).comp!; this.commit(`comp${i}`, () => this.dsp!.compressor(i, c)); }
-  commitGate(i: number): void { const g = this.ch(i).gate!; this.commit(`gate${i}`, () => this.dsp!.gate(i, g)); }
-  setRouting(outIndex: number, mask: number): void { this.routing[outIndex - 0x04] = mask; this.commit(`route${outIndex}`, () => this.dsp!.routing(outIndex, mask), 0); }
+  setDelayMs(i: number, ms: number): void {
+    const ch = this.ch(i);
+    ch.delayMs = ms;
+    this.channels = [...this.channels];
+    this.commit(`delay${i}`, () => this.dsp!.delayMs(i, ms));
+  }
+  commitComp(i: number): void {
+    const c = this.ch(i).comp!;
+    this.channels = [...this.channels];
+    this.commit(`comp${i}`, () => this.dsp!.compressor(i, c));
+  }
+  commitGate(i: number): void {
+    const g = this.ch(i).gate!;
+    this.channels = [...this.channels];
+    this.commit(`gate${i}`, () => this.dsp!.gate(i, g));
+  }
+  setRouting(outIndex: number, mask: number): void {
+    this.routing[outIndex - 0x04] = mask;
+    this.routing = [...this.routing];
+    this.commit(`route${outIndex}`, () => this.dsp!.routing(outIndex, mask), 0);
+  }
 
   // --- global ---
   async recallPreset(slot: number): Promise<void> {

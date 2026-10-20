@@ -12,7 +12,6 @@
   {#each OUT_indices as outIndex (outIndex)}
     <OutputTuning
       index={outIndex}
-      eq={device.ch(outIndex).eq!}
       allEqs={OUT_indices.map(i => ({ ch: device.ch(i), color: `var(--ch-${i})` }))}
     />
   {/each}

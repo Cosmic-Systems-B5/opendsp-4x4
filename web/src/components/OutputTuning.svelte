@@ -3,10 +3,9 @@
   import { device } from "../state/device.svelte.ts";
   import ChannelHeader from "./ChannelHeader.svelte";
   import EqPanel from "./EqPanel.svelte";
-  import type { ChannelEq } from "../eq/types.ts";
 
   let {
-    index, eq = $bindable(), allEqs }: { index: number; eq?: ChannelEq; allEqs?: { ch: any; color: string }[] } = $props();
+    index, allEqs }: { index: number; allEqs?: { ch: any; color: string }[] } = $props();
   const ch = $derived(device.ch(index));
 
   // Get extra EQs (all except current channel)
@@ -17,7 +16,7 @@
 
 <section class="output-panel" style="--c:var(--ch-{index})">
   <ChannelHeader index={index} />
-  <EqPanel index={index} bind:eq mode={ch.eqMode ?? "peq"} extraEqs={extraEqs} />
+  <EqPanel index={index} mode={ch.eqMode ?? "peq"} extraEqs={extraEqs} />
 </section>
 
 <style>

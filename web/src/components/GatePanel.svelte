@@ -4,9 +4,8 @@
   let { index }: { index: number } = $props();
 
   // Svelte 5 runes mode fix for bind:value with derived values
-  // We use a local state that syncs with the device state
   function getGate() {
-    return structuredClone(device.ch(index).gate) as NonNullable<typeof device.channels[0].gate>;
+    return $state.snapshot(device.ch(index).gate);
   }
 
   let gate = $state(getGate());

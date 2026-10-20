@@ -5,8 +5,9 @@
   import { PeqType } from "../protocol/commands.ts";
   import { DEFAULT_BAND_FREQS } from "../state/model.ts";
 
-  let { eq = $bindable(), onCommit = () => {}, showReadout = true, eqMode = "peq", extraEqs = [] }: {
-    eq: ChannelEq;
+  let { eq = $bindable(), index, onCommit = () => {}, showReadout = true, eqMode = "peq", extraEqs = [] }: {
+    eq?: ChannelEq;
+    index?: number;
     onCommit?: (kind: "band" | "hpf" | "lpf", index?: number) => void;
     showReadout?: boolean;
     eqMode?: "peq" | "geq";
@@ -17,9 +18,25 @@
   const scales = makeScales(W, H, 20, 20000, DB);
   const freqs = logFreqAxis(280, 20, 20000);
 
+  // Use eq prop if provided (for binding), otherwise derive from device
+  function getEq(): ChannelEq {
+    return $state.snapshot(eq !== undefined ? eq : device.ch(index!).eq!);
+  }
+
   let svgEl: SVGSVGElement;
   let activeBand = $state<number | null>(null);
   let drag = $state<{ kind: "band" | "hpf" | "lpf"; i: number } | null>(null);
+
+  // Local state for eq - either bound from parent or derived from device
+  let eqState = $state(getEq());
+
+  // Keep local state in sync with changes (from binding or device)
+  $effect(() => {
+    const newEq = getEq();
+    if (newEq) {
+      eqState = newEq;
+    }
+  });
 
   const clampHz = (hz: number) => Math.max(20, Math.min(20000, hz));
   const clampDb = (db: number) => Math.max(-DB, Math.min(DB, db));
@@ -38,11 +55,11 @@
     return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
   }
 
-  const sumPath = $derived(toPath(freqs, summedResponseDb(eq, freqs)));
-  const handles = $derived(eq.bands.map((b, i) => ({ i, b, x: scales.freqToX(b.freqHz), y: scales.dbToY(clampDb(b.gainDb)) })));
-  const hpfX = $derived(scales.freqToX(eq.hpf.freqHz));
-  const lpfX = $derived(scales.freqToX(eq.lpf.freqHz));
-  const active = $derived(activeBand != null ? eq.bands[activeBand]! : null);
+  const sumPath = $derived(toPath(freqs, summedResponseDb(eqState, freqs)));
+  const handles = $derived(eqState.bands.map((b, i) => ({ i, b, x: scales.freqToX(b.freqHz), y: scales.dbToY(clampDb(b.gainDb)) })));
+  const hpfX = $derived(scales.freqToX(eqState.hpf.freqHz));
+  const lpfX = $derived(scales.freqToX(eqState.lpf.freqHz));
+  const active = $derived(activeBand != null ? eqState.bands[activeBand]! : null);
 
   function startDrag(kind: "band" | "hpf" | "lpf", i: number, e: PointerEvent) {
     e.preventDefault();
@@ -54,26 +71,26 @@
     const { x, y } = toVb(e);
     const fHz = clampHz(scales.xToFreq(x));
     if (drag.kind === "band") {
-      const b = eq.bands[drag.i]!;
+      const b = eqState.bands[drag.i]!;
       b.freqHz = fHz; b.gainDb = clampDb(scales.yToDb(y)); b.bypass = false;
     } else {
-      eq[drag.kind].freqHz = fHz;
+      eqState[drag.kind].freqHz = fHz;
     }
     onCommit?.(drag.kind, drag.kind === "band" ? drag.i : undefined);
   }
   function onWheel(e: WheelEvent) {
     if (activeBand == null) return;
     e.preventDefault();
-    const b = eq.bands[activeBand]!;
+    const b = eqState.bands[activeBand]!;
     b.bwOct = Math.max(0.05, Math.min(4, b.bwOct * Math.exp(e.deltaY * 0.0012)));
     onCommit?.("band", activeBand);
   }
   function resetBand(i: number) {
-    const b = eq.bands[i]!;
+    const b = eqState.bands[i]!;
     b.freqHz = DEFAULT_BAND_FREQS[i] ?? 1000; b.gainDb = 0; b.bwOct = 1; b.type = PeqType.PEAK; b.bypass = false;
     onCommit?.("band", i);
   }
-  function cycleType(i: number, e: MouseEvent) { e.preventDefault(); const b = eq.bands[i]!; b.type = (b.type + 1) % 7; onCommit?.("band", i); }
+  function cycleType(i: number, e: MouseEvent) { e.preventDefault(); const b = eqState.bands[i]!; b.type = (b.type + 1) % 7; onCommit?.("band", i); }
 
   $effect(() => {
     if (!drag) return;
@@ -89,7 +106,7 @@
   const fLabel = (f: number) => (f >= 1000 ? `${f / 1000}k` : `${f}`);
 </script>
 <div class="eq-wrap">
-<svg bind:this={svgEl} viewBox="0 0 {W} {H}" class="eq" on:wheel={onWheel} role="img" aria-label="EQ response">
+<svg bind:this={svgEl} viewBox="0 0 {W} {H}" class="eq" onwheel={onWheel} role="img" aria-label="EQ response">
   <!-- grid -->
   {#each GRID_F as f}
     <line class="grid" x1={scales.freqToX(f)} y1="0" x2={scales.freqToX(f)} y2={H} />
@@ -101,8 +118,8 @@
   {/each}
 
   <!-- crossover cutoff markers -->
-  {#if eq.hpf.slope !== 0}<line class="xo" x1={hpfX} y1="0" x2={hpfX} y2={H} />{/if}
-  {#if eq.lpf.slope !== 0}<line class="xo" x1={lpfX} y1="0" x2={lpfX} y2={H} />{/if}
+  {#if eqState.hpf.slope !== 0}<line class="xo" x1={hpfX} y1="0" x2={hpfX} y2={H} />{/if}
+  {#if eqState.lpf.slope !== 0}<line class="xo" x1={lpfX} y1="0" x2={lpfX} y2={H} />{/if}
 
   <!-- extra EQ curves (read-only, display only) -->
   {#each extraEqs as extra (extra.eq)}
@@ -122,21 +139,22 @@
       class="handle" class:active={activeBand === h.i} class:bypass={h.b.bypass}
       cx={h.x} cy={h.y} r={activeBand === h.i ? 9 : 7}
       style="--c:{bandHue(h.i)}"
-      on:pointerdown={(e) => startDrag("band", h.i, e)}
-      on:dblclick={() => resetBand(h.i)}
-      on:contextmenu={(e) => cycleType(h.i, e)}
+      onpointerdown={(e) => startDrag("band", h.i, e)}
+      ondblclick={() => resetBand(h.i)}
+      oncontextmenu={(e) => cycleType(h.i, e)}
       role="button"
-      aria-label={`Band ${h.i + 1} handle`}
+      tabindex={0}
+      aria-label={`Band {h.i + 1} handle`}
     />
     <text class="bnum" x={h.x} y={h.y + 3} pointer-events="none">{h.i + 1}</text>
   {/each}
 
   <!-- crossover handles (X only, at base) -->
-  {#if eq.hpf.slope !== 0}
-    <rect class="xohandle" x={hpfX - 6} y={H - 16} width="12" height="12" rx="2" on:pointerdown={(e) => startDrag("hpf", 0, e)} role="button" aria-label="HPF crossover handle" />
+  {#if eqState.hpf.slope !== 0}
+    <rect class="xohandle" x={hpfX - 6} y={H - 16} width="12" height="12" rx="2" onpointerdown={(e) => startDrag("hpf", 0, e)} role="button" aria-label="HPF crossover handle" tabindex={0} />
   {/if}
-  {#if eq.lpf.slope !== 0}
-    <rect class="xohandle" x={lpfX - 6} y={H - 16} width="12" height="12" rx="2" on:pointerdown={(e) => startDrag("lpf", 0, e)} role="button" aria-label="LPF crossover handle" />
+  {#if eqState.lpf.slope !== 0}
+    <rect class="xohandle" x={lpfX - 6} y={H - 16} width="12" height="12" rx="2" onpointerdown={(e) => startDrag("lpf", 0, e)} role="button" aria-label="LPF crossover handle" tabindex={0} />
   {/if}
 </svg>
 

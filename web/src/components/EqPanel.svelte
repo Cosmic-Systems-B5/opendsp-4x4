@@ -7,7 +7,10 @@
   import type { ChannelEq } from "../eq/types.ts";
   import DelayPanel from "./DelayPanel.svelte";
 
-  let { index, eq = $bindable(), mode: externalMode, extraEqs }: { index: number; eq: ChannelEq; mode?: "peq" | "geq"; extraEqs?: { eq: ChannelEq; color: string }[] } = $props();
+  let { index, mode: externalMode, extraEqs }: { index: number; mode?: "peq" | "geq"; extraEqs?: { eq: ChannelEq; color: string }[] } = $props();
+
+  // Use the EQ data directly from device for both PEQ and GEQ modes
+  const eq = $derived(device.ch(index).eq);
 
   // Use externalMode prop directly as the source of truth for display mode
   let mode = $derived<"peq" | "geq">(externalMode ?? "peq");
@@ -31,7 +34,7 @@
 
   <!-- GEQ mode: Full-width graph + HPF/LPF below -->
   <div class="mode-content geq-mode" style:display={mode === "geq" ? "flex" : "none"}>
-    <EqGraph bind:eq onCommit={onCommit} showReadout={false} eqMode={mode} extraEqs={extraEqs} />
+    <EqGraph eq={eq} onCommit={onCommit} showReadout={false} eqMode={mode} extraEqs={extraEqs} />
   </div>
 </div>
 

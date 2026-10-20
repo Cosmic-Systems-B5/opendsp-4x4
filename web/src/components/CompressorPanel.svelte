@@ -6,7 +6,7 @@
 
   // Svelte 5 runes mode fix for bind:value with derived values
   function getComp() {
-    return structuredClone(device.ch(index).comp) as NonNullable<typeof device.channels[0].comp>;
+    return $state.snapshot(device.ch(index).comp);
   }
 
   let comp = $state(getComp());

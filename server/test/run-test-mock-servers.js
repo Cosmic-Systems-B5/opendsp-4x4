@@ -1,7 +1,7 @@
 // Test script to run two servers in mock mode with the web UI
 // Usage: node run-test-mock-servers.js
 
-import { spawn } from 'child_process';
+import { spawn, exec } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -24,10 +24,79 @@ async function sleep(ms) {
 }
 
 /**
+ * Kill any existing process using the given port
+ */
+function killProcessOnPort(port) {
+  return new Promise((resolve) => {
+    // Try lsof first (macOS/Linux)
+    const lsofChild = spawn('lsof', ['-ti:', String(port)]);
+
+    let pidData = '';
+    lsofChild.stdout.on('data', (data) => { pidData += data.toString(); });
+
+    lsofChild.on('close', (code) => {
+      if (code === 0 && pidData.trim()) {
+        // Kill the process
+        const pids = pidData.trim().split('\n').filter(p => p.trim());
+        for (const pid of pids) {
+          try {
+            process.kill(parseInt(pid, 10), 'SIGTERM');
+            log(`Killed existing process ${pid} on port ${port}`);
+          } catch (e) {}
+        }
+        resolve(true);
+      } else {
+        resolve(false);
+      }
+    });
+
+    lsofChild.on('error', () => {
+      // lsof not available, try fuser
+      const fuserChild = spawn('fuser', ['-k', '-TERM', String(port) + '/tcp']);
+      let fuserOutput = '';
+      fuserChild.stdout.on('data', (data) => { fuserOutput += data.toString(); });
+      fuserChild.stderr.on('data', (data) => { fuserOutput += data.toString(); });
+
+      fuserChild.on('close', () => {
+        resolve(fuserOutput.includes(String(port)));
+      });
+
+      fuserChild.on('error', () => {
+        resolve(false);
+      });
+    });
+  });
+}
+
+/**
  * Start a mock server instance on the given port
  */
-function startMockServer(port) {
-  return new Promise((resolve, reject) => {
+async function startMockServer(port) {
+  return new Promise(async (resolve, reject) => {
+    // Check if port is in use and kill existing process
+    try {
+      const { stdout } = await new Promise((res, rej) => {
+        exec(`lsof -ti:${port} 2>/dev/null || echo ""`, (err, stdout) => {
+          res({ stdout, err });
+        });
+      });
+      const pid = stdout.trim();
+
+      if (pid) {
+        log(`Port ${port} is in use by PID ${pid}, killing existing process...`);
+        try {
+          process.kill(parseInt(pid, 10), 'SIGTERM');
+          // Wait a moment for the port to be released
+          await sleep(500);
+        } catch (e) {
+          log(`Failed to kill process ${pid}: ${e.message}`);
+        }
+      }
+    } catch (e) {
+      // lsof not available, continue anyway
+      log(`Could not check port ${port} (${e.message})`);
+    }
+
     const env = { ...process.env, PORT: String(port), MOCK_MODE: 'true' };
     const args = [join(__dirname, '..', 'index.js')];
 
@@ -54,7 +123,20 @@ function startMockServer(port) {
       }
     });
 
-    child.on('error', reject);
+    child.on('error', (err) => {
+      // Handle EADDRINUSE by killing process and retrying
+      if (err.message && err.message.includes('EADDRINUSE')) {
+        log(`Port ${port} still in use, attempting to kill...`);
+        killProcessOnPort(port).then(() => {
+          sleep(500).then(() => {
+            // Retry starting the server
+            startMockServer(port).then(resolve).catch(reject);
+          });
+        });
+      } else {
+        reject(err);
+      }
+    });
 
     // Handle early exit
     setTimeout(() => {

@@ -830,6 +830,57 @@ function shutdown() {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
+/**
+ * Kill any existing process using the given port
+ */
+async function killProcessOnPort(port) {
+  try {
+    const { spawn } = await import('child_process');
+    return new Promise((resolve, reject) => {
+      // Try lsof first (macOS/Linux)
+      const lsofChild = spawn('lsof', ['-ti:', String(port)]);
+
+      let pidData = '';
+      lsofChild.stdout.on('data', (data) => { pidData += data.toString(); });
+
+      lsofChild.on('close', (code) => {
+        if (code === 0 && pidData.trim()) {
+          // Kill the process
+          const pids = pidData.trim().split('\n').filter(p => p.trim());
+          for (const pid of pids) {
+            try {
+              process.kill(parseInt(pid, 10), 'SIGTERM');
+              console.log(`Killed existing process ${pid} on port ${port}`);
+            } catch (e) {}
+          }
+          resolve(true);
+        } else {
+          resolve(false);
+        }
+      });
+
+      lsofChild.on('error', () => {
+        // lsof not available, try fuser
+        const fuserChild = spawn('fuser', ['-k', '-TERM', String(port) + '/tcp']);
+        let fuserOutput = '';
+        fuserChild.stdout.on('data', (data) => { fuserOutput += data.toString(); });
+        fuserChild.stderr.on('data', (data) => { fuserOutput += data.toString(); });
+
+        fuserChild.on('close', () => {
+          resolve(fuserOutput.includes(String(port)));
+        });
+
+        fuserChild.on('error', () => {
+          resolve(false);
+        });
+      });
+    });
+  } catch (e) {
+    console.error(`Error killing process on port ${port}:`, e.message);
+    return false;
+  }
+}
+
 // Start server
 const PORT = process.env.PORT || 8765;
 
@@ -843,4 +894,36 @@ httpServer.listen(PORT, () => {
   startBonjour();
 
   console.log('Waiting for clients...');
+});
+
+// Handle address already in use - kill existing process and retry once
+httpServer.on('error', async (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\nPort ${PORT} is already in use.`);
+
+    // Try to kill any existing process on this port
+    const killed = await killProcessOnPort(PORT);
+
+    if (killed) {
+      console.log(`Retrying after killing existing process...`);
+      // Give a moment for the port to be released
+      setTimeout(() => {
+        httpServer.listen(PORT, () => {
+          console.log(`WebSocket bridge listening on ws://localhost:${PORT} (retry)`);
+          console.log(`HTTP status at http://localhost:${PORT}/`);
+          console.log(`Mock mode: ${process.env.MOCK_MODE === 'true' ? 'enabled' : 'disabled'}`);
+          console.log(`Server ID: ${SERVER_ID}`);
+
+          startBonjour();
+          console.log('Waiting for clients...');
+        });
+      }, 500);
+    } else {
+      console.error(`\nCould not kill existing process on port ${PORT}.`);
+      console.error('Please manually kill any processes using this port and try again.');
+      process.exit(1);
+    }
+  } else {
+    throw err;
+  }
 });

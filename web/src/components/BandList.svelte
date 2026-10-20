@@ -8,7 +8,7 @@
   let { index }: { index: number } = $props();
 
   function getEq() {
-    return structuredClone(device.ch(index).eq);
+    return $state.snapshot(device.ch(index).eq);
   }
 
   // Local state for reactive bindings in Svelte 5 runes mode

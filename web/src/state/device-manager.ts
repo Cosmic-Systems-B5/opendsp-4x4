@@ -90,7 +90,11 @@ class DeviceManagerState {
     for (const device of this.devices) {
       if (device.role === 'slave') {
         const ch = device.store.channels[channelIndex];
-        if (ch) Object.assign(ch, updates);
+        if (ch) {
+          Object.assign(ch, updates);
+          // Reassign to trigger reactivity
+          device.store.channels = [...device.store.channels];
+        }
       }
     }
   }
@@ -104,6 +108,8 @@ class DeviceManagerState {
         const routingIndex = outIndex - 0x04;
         if (routingIndex >= 0 && routingIndex < device.store.routing.length) {
           device.store.routing[routingIndex] = mask;
+          // Reassign to trigger reactivity
+          device.store.routing = [...device.store.routing];
         }
       }
     }
@@ -132,6 +138,8 @@ class DeviceManagerState {
         if (eq && Array.isArray(eq.bands) && bandIndex < eq.bands.length) {
           // @ts-ignore - Object.assign overload mismatch
           Object.assign(eq.bands[bandIndex], updates);
+          // Reassign to trigger reactivity
+          device.store.channels = [...device.store.channels];
         }
       }
     }
@@ -148,6 +156,8 @@ class DeviceManagerState {
         const eq = ch?.eq;
         if (eq && (type in eq)) {
           Object.assign(eq[type], updates);
+          // Reassign to trigger reactivity
+          device.store.channels = [...device.store.channels];
         }
       }
     }
