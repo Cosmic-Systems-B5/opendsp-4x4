@@ -3,6 +3,7 @@
   import PatchBoard from "./components/PatchBoard.svelte";
   import TuningView from "./components/TuningView.svelte";
   import SystemView from "./components/SystemView.svelte";
+  import FlashMessage from "./components/FlashMessage.svelte";
 
   // Load saved view mode from localStorage, default to "tuning"
   const savedViewMode = typeof localStorage !== "undefined" ? localStorage.getItem("opendsp-view-mode") : null;
@@ -16,7 +17,67 @@
       // Ignore storage errors
     }
   });
+
+  // Flash message state - supports both auto-dismissing messages and confirmations
+  let flashMessage = $state<{ text: string; type: 'success' | 'error' | 'info'; confirm?: boolean } | null>(null);
+
+  // Confirmation callback storage
+  let confirmationCallback: ((confirmed: boolean) => void) | null = null;
+
+  function showFlash(text: string, type: 'success' | 'error' | 'info' = 'info', confirm = false): Promise<boolean> {
+    return new Promise((resolve) => {
+      flashMessage = { text, type, confirm };
+
+      if (confirm) {
+        // Store the callback for when user confirms or cancels
+        confirmationCallback = resolve;
+
+        // Also listen for the custom event from FlashMessage component
+        const handleConfirm = (e: Event) => {
+          const detail = (e as CustomEvent).detail;
+          if (detail?.confirmed !== undefined) {
+            if (confirmationCallback) {
+              confirmationCallback(detail.confirmed);
+              confirmationCallback = null;
+            }
+            // Only clear flash message after callback is called
+            window.setTimeout(() => {
+              if (flashMessage?.text === text) {
+                flashMessage = null;
+              }
+            }, 100);
+          }
+        };
+
+        window.addEventListener('flash-confirm', handleConfirm);
+      } else {
+        // Auto-clear after 4 seconds for regular messages
+        window.setTimeout(() => {
+          if (flashMessage?.text === text && flashMessage.type === type) {
+            flashMessage = null;
+          }
+        }, 4000);
+      }
+    });
+  }
+
+  // Export for use in other components
+  (globalThis as any).showFlash = showFlash;
+
+  // Listen for flash events from child components (in case they dispatch custom events)
+  $effect(() => {
+    const handleFlash = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.text) {
+        showFlash(detail.text, detail.type || 'info', detail.confirm || false);
+      }
+    };
+    window.addEventListener('flash', handleFlash);
+    return () => window.removeEventListener('flash', handleFlash);
+  });
 </script>
+
+<FlashMessage message={flashMessage?.text || ''} type={flashMessage?.type || 'info'} confirm={!!flashMessage?.confirm} />
 
 <header class="top">
   <strong>cosmicDSP-4x4</strong>

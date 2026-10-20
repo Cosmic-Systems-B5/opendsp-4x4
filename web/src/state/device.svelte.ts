@@ -7,7 +7,7 @@ import { defaultCalibration, type Calibration } from "../eq/calibration.ts";
 import { getLevelsFrame, gainRawToDb } from "../protocol/control.ts";
 import { thresholdRawToDb, samplesToMs, rawToQ, peqIndexToHz } from "../protocol/blocks.ts";
 import { levelsFromReply, reconstructPresetImage, parsePresetImage } from "../protocol/readback.ts";
-import { makeChannels, OUT_BASE, DEFAULT_BAND_FREQS, type Channel } from "./model.ts";
+import { makeChannels, defaultChannel, OUT_BASE, DEFAULT_BAND_FREQS, type Channel } from "./model.ts";
 import type { ChannelEq } from "../eq/types.ts";
 import { deviceManager } from "./device-manager.ts";
 import presetManager from "./preset-manager.ts";
@@ -48,6 +48,8 @@ export class DeviceStore {
   eqLink = $state<Record<number, number>>({}); // output index -> linked partner (symmetric); EQ edits mirror
   role: DeviceRole = 'master'; // set by DeviceManager when multi-device is active
 
+  currentPresetId = $state<string | null>(null); // GUID of the currently loaded preset from localStorage
+
   private dsp: Dsp | null = null;
   private cal: Calibration = defaultCalibration;
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -56,7 +58,13 @@ export class DeviceStore {
   lastReadback: ReturnType<typeof parsePresetImage> | null = null; // raw readback (debug/calibration)
 
   get selectedChannel(): Channel | undefined { return this.channels[this.selected]; }
-  ch(index: number): Channel { return this.channels[index]!; }
+  ch(index: number): Channel {
+    // Ensure we always have enough channels
+    while (this.channels.length <= index) {
+      this.channels = [...this.channels, defaultChannel(this.channels.length)];
+    }
+    return this.channels[index]!;
+  }
   /** Collapse the open node → all-collapsed patch-board overview. */
   collapse(): void { this.selected = -1; }
 
@@ -218,6 +226,9 @@ export class DeviceStore {
       if (this.dsp) void Promise.resolve().then(fn).catch(() => {}).finally(() => {
         // Broadcast changes to slaves after successful commit
         this.broadcastToSlaves();
+        // Save device state to localStorage after changes
+        this.saveDeviceState();
+        // Note: preset updates are now only triggered manually via the "Update" button
       });
     }, delay));
   }
@@ -271,12 +282,12 @@ export class DeviceStore {
 
         // Sync compressor
         if (ch.comp) {
-          deviceManager.broadcastChannelUpdate(i, { comp: structuredClone(ch.comp) });
+          deviceManager.broadcastChannelUpdate(i, { comp: { ...ch.comp } });
         }
       } else {
         // Sync gate for inputs
         if (ch.gate) {
-          deviceManager.broadcastChannelUpdate(i, { gate: structuredClone(ch.gate) });
+          deviceManager.broadcastChannelUpdate(i, { gate: { ...ch.gate } });
         }
       }
     }
@@ -367,8 +378,15 @@ export class DeviceStore {
   }
   /** Copy a whole channel's EQ (7 bands + crossover) to another output and push it. */
   copyEqTo(src: number, dst: number): void {
-    const s = this.ch(src).eq; if (!s || !this.ch(dst).eq) return;
-    this.ch(dst).eq = structuredClone(s) as ChannelEq;
+    const srcCh = this.ch(src);
+    if (!srcCh.eq || !this.ch(dst).eq) return;
+
+    // Convert $state to plain objects for cloning
+    this.ch(dst).eq = {
+      bands: srcCh.eq.bands.map(b => ({ ...b })),
+      hpf: { freqHz: srcCh.eq.hpf.freqHz, slope: srcCh.eq.hpf.slope },
+      lpf: { freqHz: srcCh.eq.lpf.freqHz, slope: srcCh.eq.lpf.slope }
+    };
     this.pushEq(dst);
   }
   private pushEq(i: number): void {
@@ -442,6 +460,61 @@ export class DeviceStore {
     this.routing = snap.routing;
     await this.pushAll();
   }
+
+  // --- Device state persistence to localStorage ---
+  saveDeviceState(): void {
+    try {
+      const deviceState = {
+        channels: this.channels,
+        routing: this.routing,
+        presetName: this.presetName,
+        activePreset: this.activePreset,
+        eqLink: this.eqLink
+      };
+      localStorage.setItem("opendsp-device-state", JSON.stringify(deviceState));
+    } catch (e) {
+      console.error("Error saving device state:", e);
+    }
+  }
+
+  async restoreDeviceState(): Promise<void> {
+    let raw: string | null = null;
+    try { raw = localStorage.getItem("opendsp-device-state"); } catch { /* ignore */ }
+    if (!raw) return;
+
+    const state = JSON.parse(raw) as {
+      channels: Channel[];
+      routing: number[];
+      presetName?: string;
+      activePreset?: number;
+      eqLink?: Record<number, number>;
+    };
+
+    this.channels = state.channels;
+
+    // Ensure we have at least 8 default channels after restore
+    while (this.channels.length < 8) {
+      this.channels = [...this.channels, defaultChannel(this.channels.length)];
+    }
+
+    this.routing = state.routing;
+    if (state.presetName !== undefined) this.presetName = state.presetName;
+    if (state.activePreset !== undefined) this.activePreset = state.activePreset;
+    if (state.eqLink !== undefined) this.eqLink = state.eqLink;
+
+    // Request current state from device after restoring from localStorage
+    if (this.dsp && this.connected) {
+      try { await this.hydrate(); } catch { /* ignore errors */ }
+    }
+  }
+
+  clearDeviceState(): void {
+    try {
+      localStorage.removeItem("opendsp-device-state");
+    } catch (e) {
+      console.error("Error clearing device state:", e);
+    }
+  }
   /** Re-send every channel's full state to the device (Restore Defaults). Meters paused to avoid contention. */
   async pushAll(): Promise<void> {
     if (!this.dsp) return;
@@ -474,13 +547,13 @@ export class DeviceStore {
   }
 
   // --- JSON Preset Save/Load ---
-  async savePresetToJson(): Promise<void> {
+  async savePresetToJson(name?: string): Promise<void> {
     const presetData = presetManager.exportCurrentPreset();
     try {
       const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(presetData);
       const downloadAnchorNode = document.createElement('a');
       downloadAnchorNode.setAttribute("href", dataStr);
-      downloadAnchorNode.setAttribute("download", `dsp-preset-${new Date().toISOString().slice(0, 10)}.json`);
+      downloadAnchorNode.setAttribute("download", name ? `${name.replace(/[^a-z0-9]/gi, '_')}.json` : `dsp-preset-${new Date().toISOString().slice(0, 10)}.json`);
       document.body.appendChild(downloadAnchorNode);
       downloadAnchorNode.click();
       downloadAnchorNode.remove();
@@ -490,13 +563,294 @@ export class DeviceStore {
     }
   }
 
-  async loadPresetFromJson(jsonString: string): Promise<void> {
+  async loadPresetFromJson(jsonString: string, applyToDevice = false): Promise<void> {
     try {
       const parsed = JSON.parse(jsonString);
       presetManager.importPreset(parsed);
+
+      // Optionally apply the loaded preset to the device
+      if (applyToDevice && this.dsp) {
+        await this.applyLoadedPreset(parsed);
+      }
     } catch (e) {
       console.error('Error loading preset:', e);
       throw new Error(`Invalid preset data: ${(e as Error).message}`);
+    }
+  }
+
+  /**
+   * Apply a loaded preset to the connected device. If not connected, only updates local state.
+   */
+  async applyLoadedPreset(preset: any): Promise<void> {
+    if (!this.dsp) return;
+
+    // Stop meters during preset application
+    this.stopMeters();
+    try {
+      // Restore routing - send to device only if connected
+      if (Array.isArray(preset.device.routing)) {
+        this.routing = preset.device.routing;
+        for (let i = 0; i < preset.device.routing.length; i++) {
+          await this.dsp.routing(OUT_BASE + i, preset.device.routing[i]).catch(() => {});
+        }
+      }
+
+      // Restore EQ links
+      if (preset.device.eqLink && typeof preset.device.eqLink === 'object') {
+        this.eqLink = { ...preset.device.eqLink };
+      }
+
+      // Restore channels - send to device only if connected
+      if (Array.isArray(preset.device.channels)) {
+        for (let i = 0; i < preset.device.channels.length; i++) {
+          const savedCh = preset.device.channels[i];
+          if (!savedCh) continue;
+
+          const ch = this.ch(i);
+
+          // Basic properties - update local state, send to device only if connected
+          if (typeof savedCh.gainDb === 'number') {
+            ch.gainDb = savedCh.gainDb;
+            await this.dsp.setLevelDb(i, savedCh.gainDb).catch(() => {});
+          }
+
+          if (typeof savedCh.mute === 'boolean') {
+            ch.mute = savedCh.mute;
+            await this.dsp.mute(i, savedCh.mute).catch(() => {});
+          }
+
+          if (typeof savedCh.polarity === 'boolean') {
+            ch.polarity = savedCh.polarity;
+            await this.dsp.setPolarity(i, savedCh.polarity).catch(() => {});
+          }
+
+          // Output-specific: delay, compressor, EQ - send to device only if connected
+          if (ch.isOutput) {
+            if (savedCh.delayMs !== undefined) {
+              ch.delayMs = savedCh.delayMs;
+              await this.dsp.delayMs(i, savedCh.delayMs).catch(() => {});
+            }
+
+            // Compressor
+            if (savedCh.comp) {
+              ch.comp = { ...savedCh.comp };
+              await this.dsp.compressor(i, savedCh.comp).catch(() => {});
+            }
+
+            // EQ
+            if (savedCh.eq) {
+              ch.eq = {
+                bands: savedCh.eq.bands.map((b: any) => ({ ...b })),
+                hpf: { freqHz: savedCh.eq.hpf.freqHz, slope: savedCh.eq.hpf.slope },
+                lpf: { freqHz: savedCh.eq.lpf.freqHz, slope: savedCh.eq.lpf.slope }
+              };
+
+              // Crossovers
+              if (savedCh.eq.hpf) {
+                await this.dsp.crossoverHpf(i, this.cal.xoverHzToRaw(savedCh.eq.hpf.freqHz), savedCh.eq.hpf.slope).catch(() => {});
+              }
+              if (savedCh.eq.lpf) {
+                await this.dsp.crossoverLpf(i, this.cal.xoverHzToRaw(savedCh.eq.lpf.freqHz), savedCh.eq.lpf.slope).catch(() => {});
+              }
+
+              // EQ bands
+              if (Array.isArray(savedCh.eq.bands)) {
+                for (let band = 0; band < savedCh.eq.bands.length; band++) {
+                  const savedBand = savedCh.eq.bands[band];
+                  if (!savedBand) continue;
+
+                  ch.eq!.bands[band] = { ...savedBand };
+                  await this.dsp.peqBand(i, band, {
+                    freqHz: savedBand.freqHz,
+                    q: this.cal.bwOctToQ(savedBand.bwOct, savedBand.freqHz),
+                    gainRaw: this.cal.peqGainDbToRaw(savedBand.gainDb, savedBand.type),
+                    type: savedBand.type,
+                    bypass: savedBand.bypass
+                  }).catch(() => {});
+                }
+              }
+            }
+          } else {
+            // Input-specific: gate - send to device only if connected
+            if (savedCh.gate) {
+              ch.gate = { ...savedCh.gate };
+              await this.dsp.gate(i, savedCh.gate).catch(() => {});
+            }
+          }
+        }
+      }
+
+      // Restore active preset slot
+      if (typeof preset.device.activePreset === 'number') {
+        this.activePreset = preset.device.activePreset;
+      }
+
+    } finally {
+      this.startMeters();
+    }
+  }
+
+  /**
+   * Load a saved preset from localStorage by index and apply it to the device
+   */
+  async loadSavedPresetFromStorage(index: number): Promise<void> {
+    const preset = presetManager.loadPreset(index);
+    if (!preset) return;
+
+    // First, update currentPresetId and save to localStorage immediately
+    // This ensures localStorage is updated even without a hardware connection
+    this.currentPresetId = preset.id;
+
+    // Apply preset data to current device state (local state update)
+    this.channels = preset.device.channels;
+
+    // Ensure we have at least 8 default channels after loading preset
+    while (this.channels.length < 8) {
+      this.channels = [...this.channels, defaultChannel(this.channels.length)];
+    }
+
+    this.routing = preset.device.routing;
+    this.eqLink = { ...preset.device.eqLink };
+    this.activePreset = preset.device.activePreset;
+
+    // Save device state to localStorage immediately
+    this.saveDeviceState();
+
+    // Send to device if connected - catch errors to prevent timeout failures
+    if (this.dsp) {
+      try {
+        await this.applyLoadedPreset(preset);
+      } catch (err) {
+        console.error("Error applying preset to device:", err);
+        // Don't throw - the preset was still loaded into local state and saved to localStorage
+      }
+    }
+  }
+
+  /**
+   * Save current device state as a named preset in localStorage
+   */
+  saveCurrentPresetToStorage(name: string): void {
+    // Get channels array - ensure we always have at least 8 default channels
+    const channelCount = this.channels.length;
+
+    // Ensure we have all 8 default channels before saving
+    if (channelCount < 8) {
+      for (let i = channelCount; i < 8; i++) {
+        this.channels = [...this.channels, defaultChannel(i)];
+      }
+    }
+
+    const channels: Channel[] = [];
+    for (let i = 0; i < this.channels.length; i++) {
+      const ch = this.ch(i);
+      channels.push({
+        index: ch.index,
+        name: ch.name,
+        isOutput: ch.isOutput,
+        gainDb: ch.gainDb,
+        mute: ch.mute,
+        polarity: ch.polarity,
+        meter: ch.meter,
+        eq: ch.eq ? {
+          bands: ch.eq.bands.map((b: any) => ({
+            freqHz: b.freqHz,
+            gainDb: b.gainDb,
+            bwOct: b.bwOct,
+            type: b.type,
+            bypass: b.bypass
+          })),
+          hpf: { freqHz: ch.eq.hpf.freqHz, slope: ch.eq.hpf.slope },
+          lpf: { freqHz: ch.eq.lpf.freqHz, slope: ch.eq.lpf.slope }
+        } : undefined,
+        delayMs: ch.delayMs,
+        comp: ch.comp ? { ...ch.comp } : undefined,
+        gate: ch.gate ? { ...ch.gate } : undefined,
+        eqMode: ch.eqMode
+      });
+    }
+
+    const routing = [...this.routing];
+
+    // Create a new preset - always generates a new GUID
+    const savedPreset = presetManager.saveDeviceStateToPreset(name, channels, routing, this.eqLink, this.activePreset);
+
+    // Store the ID of the current preset for tracking
+    if (savedPreset) {
+      this.currentPresetId = savedPreset.id;
+    }
+
+    // Also save device state to localStorage for quick restoration
+    this.saveDeviceState();
+  }
+
+  /**
+   * Save current device state as a named preset in localStorage, updating an existing preset by ID
+   */
+  updateExistingPresetToStorage(name: string, presetId: string): void {
+    // Get channels array - ensure we always have at least 8 default channels
+    const channelCount = this.channels.length;
+
+    // Ensure we have all 8 default channels before saving
+    if (channelCount < 8) {
+      for (let i = channelCount; i < 8; i++) {
+        this.channels = [...this.channels, defaultChannel(i)];
+      }
+    }
+
+    const channels: Channel[] = [];
+    for (let i = 0; i < this.channels.length; i++) {
+      const ch = this.ch(i);
+      channels.push({
+        index: ch.index,
+        name: ch.name,
+        isOutput: ch.isOutput,
+        gainDb: ch.gainDb,
+        mute: ch.mute,
+        polarity: ch.polarity,
+        meter: ch.meter,
+        eq: ch.eq ? {
+          bands: ch.eq.bands.map((b: any) => ({
+            freqHz: b.freqHz,
+            gainDb: b.gainDb,
+            bwOct: b.bwOct,
+            type: b.type,
+            bypass: b.bypass
+          })),
+          hpf: { freqHz: ch.eq.hpf.freqHz, slope: ch.eq.hpf.slope },
+          lpf: { freqHz: ch.eq.lpf.freqHz, slope: ch.eq.lpf.slope }
+        } : undefined,
+        delayMs: ch.delayMs,
+        comp: ch.comp ? { ...ch.comp } : undefined,
+        gate: ch.gate ? { ...ch.gate } : undefined,
+        eqMode: ch.eqMode
+      });
+    }
+
+    const routing = [...this.routing];
+
+    // Update existing preset by ID - preserves the original GUID
+    const idx = presetManager.findPresetIndexById(presetId);
+    if (idx >= 0) {
+      presetManager.updatePresetById(presetId, {
+        name,
+        device: {
+          channels,
+          routing,
+          eqLink: { ...this.eqLink },
+          activePreset: this.activePreset,
+          presetName: this.presetName
+        }
+      });
+      const savedPreset = presetManager.loadPreset(idx);
+
+      // Store the ID of the current preset for tracking
+      if (savedPreset) {
+        this.currentPresetId = savedPreset.id;
+      }
+
+      // Also save device state to localStorage for quick restoration
+      this.saveDeviceState();
     }
   }
 

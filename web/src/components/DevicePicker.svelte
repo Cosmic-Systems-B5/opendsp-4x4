@@ -1,55 +1,62 @@
 <script lang="ts">
   import { device, deviceManager } from "../state/device.svelte.ts";
 
-  let remoteUrl = $state<string>("ws://localhost:8765");
+  let remoteUrls = $state<Array<string>>([]);
   let remoteDevices = $state<Array<{path: string; vendorId: string; productId: string; product: string}>>([]);
   let loadingRemote = $state(false);
   let connecting = $state(false);
 
   // Load saved URL
-  const savedUrl = typeof localStorage !== "undefined" ? localStorage.getItem("opendsp-remote-url") : null;
-  if (savedUrl) remoteUrl = savedUrl;
+  const savedUrls = typeof localStorage !== "undefined" ? localStorage.getItem("opendsp-ws-urls") : null;
+  if (savedUrls) {
+    remoteUrls = JSON.parse(savedUrls);
+  }
 
   async function loadRemoteDevices() {
     loadingRemote = true;
-    try {
-      const ws = new WebSocket(remoteUrl.trim());
 
-      ws.onopen = () => {
-        // Request devices list
-        ws.send(JSON.stringify({ type: 'request', data: btoa(JSON.stringify({ action: 'list_devices' })) }));
-      };
+    remoteUrls.forEach((url) => {
+      try {
+        const ws = new WebSocket(url.trim());
 
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === 'report') {
-            const data = JSON.parse(atob(msg.data));
-            if (data.devices !== undefined) {
-              remoteDevices = data.devices || [];
+        ws.onopen = () => {
+          // Request devices list
+          ws.send(JSON.stringify({ type: 'request', data: btoa(JSON.stringify({ action: 'list_devices' })) }));
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'report') {
+              const data = JSON.parse(atob(msg.data));
+              if (data.devices !== undefined) {
+                remoteDevices = data.devices || [];
+              }
+              // Show error message for no devices
+              if (data.error === 'no_device' && !data.devices?.length) {
+                console.log('Remote DSP: No devices connected to server');
+              }
             }
-            // Show error message for no devices
-            if (data.error === 'no_device' && !data.devices?.length) {
-              console.log('Remote DSP: No devices connected to server');
-            }
+          } catch (e) {
+            console.error('Failed to parse remote devices response:', e);
           }
-        } catch (e) {
-          console.error('Failed to parse remote devices response:', e);
-        }
-      };
+        };
 
-      ws.onclose = () => {
-        loadingRemote = false;
-      };
+        ws.onclose = () => {
+          loadingRemote = false;
+        };
 
-      ws.onerror = () => {
+        ws.onerror = () => {
+          loadingRemote = false;
+          console.error('WebSocket error loading remote devices');
+        };
+      } catch (e) {
         loadingRemote = false;
-        console.error('WebSocket error loading remote devices');
-      };
-    } catch (e) {
-      loadingRemote = false;
-      console.error('Failed to load remote devices:', e);
-    }
+        console.error('Failed to load remote devices:', e);
+      }
+
+
+    })
   }
 
   async function connectDevice(url: string) {
@@ -77,7 +84,6 @@
     deviceManager.disconnectAll();
   }
 
-
   // Server URL management
   let newServerUrl = $state("");
   let showUrlInput = $state(false);
@@ -90,12 +96,10 @@
     }
   }
 
-  const serverUrls = deviceManager.devices.length > 0
-    ? deviceManager.devices.map(d => d.connectionInfo.url || '').filter(Boolean)
-    : ["ws://localhost:8765", "ws://localhost:8766"];
 </script>
 
 <div class="device-picker">
+  <div class="panel-content">
   <!-- Connection Section - Contains both connection status and device list in one table -->
   <div class="connection-section">
     <h3>DSP Connections</h3>
@@ -104,7 +108,7 @@
     <!-- Server URL configuration -->
     <div class="url-config">
       <div class="url-inputs">
-        {#each serverUrls as url, i}
+        {#each remoteUrls as url, i}
           <div class="url-row">
             <input type="text" value={url} readonly class="url-display" />
             <button onclick={() => {
@@ -225,11 +229,12 @@
   {:else}
     <p class="hint">Select a server to connect. Only WebSocket connections are supported.</p>
   {/if}
+  </div>
 </div>
 
 <style>
   .device-picker { width: 100%; max-width: 900px; margin: 0 auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-panel); overflow: hidden; }
-
+  .panel-content { padding: 1rem; }
   .connection-section h3 { margin-top: 0; color: var(--text); font-size: 1rem; }
   .hint { color: var(--text-dim); font-style: italic; font-size: .85rem; margin-bottom: .75rem; }
 

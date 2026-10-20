@@ -169,7 +169,25 @@ class DeviceManagerState {
 
     for (const device of this.devices) {
       if (device.role === 'slave') {
-        device.store.channels = structuredClone(masterDevice.channels);
+        // Convert $state to plain objects for cloning
+        device.store.channels = masterDevice.channels.map(ch => ({
+          index: ch.index,
+          name: ch.name,
+          isOutput: ch.isOutput,
+          gainDb: ch.gainDb,
+          mute: ch.mute,
+          polarity: ch.polarity,
+          meter: ch.meter,
+          eq: ch.eq ? {
+            bands: ch.eq.bands.map(b => ({ ...b })),
+            hpf: { freqHz: ch.eq.hpf.freqHz, slope: ch.eq.hpf.slope },
+            lpf: { freqHz: ch.eq.lpf.freqHz, slope: ch.eq.lpf.slope }
+          } : undefined,
+          delayMs: ch.delayMs,
+          comp: ch.comp ? { ...ch.comp } : undefined,
+          gate: ch.gate ? { ...ch.gate } : undefined,
+          eqMode: ch.eqMode
+        }));
         device.store.routing = [...masterDevice.routing];
         device.store.eqLink = { ...masterDevice.eqLink };
       }

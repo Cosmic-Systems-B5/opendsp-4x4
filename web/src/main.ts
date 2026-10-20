@@ -5,5 +5,11 @@ import "./theme.css";
 
 const app = mount(App, { target: document.getElementById("app")! });
 (globalThis as Record<string, unknown>).device = device; // debug probe handle
-void device.autoConnect(); // reconnect to an already-granted device on load (no prompt)
+
+// Restore device state from localStorage before auto-connect
+void device.restoreDeviceState();
+
+// Auto-connect to an already-granted device on load (no prompt)
+void device.autoConnect();
+
 export default app;

@@ -1,5 +1,0 @@
-[ ] Add device state to local storage so it survives browser refreshes. If a device is connected then if a session if refreshed then restore from local storage and then request current state from the device
-[ ] Add device state preset json saves to local storage as it's primary function. Amend UI to allow for loading a preset from localstorage (which also sends to attached dsp devices), saving the current preset to localStorage and deleteing a preset from local storage.
-[ ] Add a download button to the list of available json presets to allow for offline saving.
-[ ] Add an upload button to allow adding saved json files to the local storage. Don't automatically trigger them when adding.
-[ ] Ensure all the dsp device data is stored in the JSON preset data. Currently it's missing a lot of the information.
