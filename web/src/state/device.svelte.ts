@@ -22,7 +22,7 @@ function loadWebSocketUrls(): string[] {
     const saved = localStorage.getItem("opendsp-ws-urls");
     if (saved) return JSON.parse(saved);
   } catch (e) {}
-  return ["ws://localhost:8765", "ws://localhost:8766", "ws://localhost:8767"];
+  return [];
 }
 
 function saveWebSocketUrls(urls: string[]): void {
@@ -49,6 +49,10 @@ export class DeviceStore {
   role: DeviceRole = 'master'; // set by DeviceManager when multi-device is active
 
   currentPresetId = $state<string | null>(null); // GUID of the currently loaded preset from localStorage
+
+  get webSocketUrls(): string[] {
+    return webSocketUrls;
+  }
 
   private dsp: Dsp | null = null;
   private cal: Calibration = defaultCalibration;

@@ -2,75 +2,17 @@
   import { device, deviceManager } from "../state/device.svelte.ts";
 
   let remoteUrls = $state<Array<string>>([]);
-  let remoteDevices = $state<Array<{path: string; vendorId: string; productId: string; product: string}>>([]);
-  let loadingRemote = $state(false);
   let connecting = $state(false);
 
-  // Load saved URL
-  const savedUrls = typeof localStorage !== "undefined" ? localStorage.getItem("opendsp-ws-urls") : null;
-  if (savedUrls) {
-    remoteUrls = JSON.parse(savedUrls);
-  }
-
-  async function loadRemoteDevices() {
-    loadingRemote = true;
-
-    remoteUrls.forEach((url) => {
-      try {
-        const ws = new WebSocket(url.trim());
-
-        ws.onopen = () => {
-          // Request devices list
-          ws.send(JSON.stringify({ type: 'request', data: btoa(JSON.stringify({ action: 'list_devices' })) }));
-        };
-
-        ws.onmessage = (event) => {
-          try {
-            const msg = JSON.parse(event.data);
-            if (msg.type === 'report') {
-              const data = JSON.parse(atob(msg.data));
-              if (data.devices !== undefined) {
-                remoteDevices = data.devices || [];
-              }
-              // Show error message for no devices
-              if (data.error === 'no_device' && !data.devices?.length) {
-                console.log('Remote DSP: No devices connected to server');
-              }
-            }
-          } catch (e) {
-            console.error('Failed to parse remote devices response:', e);
-          }
-        };
-
-        ws.onclose = () => {
-          loadingRemote = false;
-        };
-
-        ws.onerror = () => {
-          loadingRemote = false;
-          console.error('WebSocket error loading remote devices');
-        };
-      } catch (e) {
-        loadingRemote = false;
-        console.error('Failed to load remote devices:', e);
-      }
-
-
-    })
-  }
+  // Use the reactive webSocketUrls from device state
+  $effect(() => {
+    remoteUrls = device.webSocketUrls;
+  });
 
   async function connectDevice(url: string) {
-    // Don't allow re-connecting if already connected to the same URL
-    if (device.connected && deviceManager.devices.find(d => d.role === 'master')?.connectionInfo.url === url) return;
-
     connecting = true;
     try {
       await device.connect(url);
-      const info = {
-        url: url,
-        productName: "DSP 4x4 (remote)"
-      };
-      deviceManager.connect(device, 'websocket', info);
     } catch (e) {
       console.error('Connection failed:', e);
       device.error = (e as Error).message;
@@ -79,9 +21,12 @@
     }
   }
 
-  function handleDisconnect() {
-    device.connected = false;
-    deviceManager.disconnectAll();
+  function disconnectServer(url: string) {
+    // Find all devices attached to this server and disconnect them
+    const dev = deviceManager.devices.find(d => d.connectionInfo.url === url);
+    if (dev) {
+      deviceManager.disconnect(dev.id);
+    }
   }
 
   // Server URL management
@@ -100,52 +45,60 @@
 
 <div class="device-picker">
   <div class="panel-content">
-  <!-- Connection Section - Contains both connection status and device list in one table -->
+  <!-- Connection Section -->
   <div class="connection-section">
     <h3>DSP Connections</h3>
-    <p class="hint">Manage your DSP devices and configure WebSocket servers.</p>
+    <p class="hint">Configure WebSocket servers and manage attached DSP devices.</p>
 
     <!-- Server URL configuration -->
     <div class="url-config">
-      <div class="url-inputs">
+      <h4>WebSocket Servers ({remoteUrls.length})</h4>
+      <ul class="server-list">
         {#each remoteUrls as url, i}
-          <div class="url-row">
-            <input type="text" value={url} readonly class="url-display" />
-            <button onclick={() => {
-              // Remove URL and try to reconnect
+          <li class="server-item">
+            <span class="server-url">{url}</span>
+            {#if deviceManager.devices.some(d => d.connectionInfo.url === url)}
+              <button class="primary-btn disconnect-btn" onclick={() => disconnectServer(url)}>Disconnect</button>
+            {:else}
+              <button class="primary-btn connect-btn" onclick={() => connectDevice(url)}>
+                Connect
+              </button>
+            {/if}
+            <button class="remove-btn" onclick={() => {
               device.removeServerUrl(i);
-              if (device.connected && deviceManager.devices[0]?.connectionInfo.url === url) {
-                handleDisconnect();
-              }
-            }} class="remove-btn">Remove</button>
-          </div>
+              // Also disconnect any devices on this server
+              disconnectServer(url);
+            }} title="Remove server">×</button>
+          </li>
         {/each}
-      </div>
+      </ul>
 
       <div class="add-url-row" style:display={showUrlInput ? 'flex' : 'none'}>
-        <input type="text" bind:value={newServerUrl} placeholder="ws://server:port" class="url-input" />
-        <button onclick={addServerUrl} class="primary-btn">Add</button>
+        <input type="text" bind:value={newServerUrl} placeholder="ws://server:port" />
+        <button onclick={addServerUrl} class="primary-btn">Add Server</button>
       </div>
 
       <div class="controls">
-        <button class="secondary-btn" onclick={() => showUrlInput = !showUrlInput}>
+        <button class="secondary-btn" onclick={() => {
+          showUrlInput = !showUrlInput;
+          if (!showUrlInput) newServerUrl = "";
+        }}>
           {#if showUrlInput}Cancel{:else}+ Add Server{/if}
         </button>
-        <button onclick={loadRemoteDevices} disabled={loadingRemote}>{#if loadingRemote}Loading...{:else}Refresh{/if}</button>
       </div>
     </div>
 
-    <!-- Device list table - merged into connection section -->
+    <!-- Devices attached to servers -->
+    <h4>Attached DSP Devices ({deviceManager.devices.length})</h4>
     <div class="device-list">
+      {#if deviceManager.devices.length > 0}
         <table class="device-table">
           <thead>
             <tr>
-              <th style="width: 60px;">Status</th>
+              <th>Status</th>
               <th>Role</th>
               <th>Product Name</th>
-              <th>Type</th>
-              <th>Server IP</th>
-              <th>Device ID</th>
+              <th>Server URL</th>
               <th>Action</th>
             </tr>
           </thead>
@@ -162,9 +115,7 @@
                   {#if dev.role === 'master'}<span class="role-label">Master</span>{/if}
                 </td>
                 <td class="product">{dev.connectionInfo.productName}</td>
-                <td class="type">{dev.transportType.toUpperCase()}</td>
-                <td class="server-ip">{dev.connectionInfo.url ?? dev.connectionInfo.path ?? 'N/A'}</td>
-                <td class="device-id">{dev.id.slice(0, 12)}...</td>
+                <td class="server-ip">{dev.connectionInfo.url}</td>
                 <td class="action">
                   {#if dev.role !== 'master'}
                     <button class="btn-link" onclick={() => deviceManager.disconnect(dev.id)}>Disconnect</button>
@@ -176,42 +127,15 @@
             {/each}
           </tbody>
         </table>
-
-      <!-- Remote devices (for connection) - shown when no local devices connected -->
-      {#if deviceManager.devices.length === 0 && remoteDevices.length > 0}
-        <div class="remote-devices-section">
-          <p class="section-title">Available Remote DSPs:</p>
-          <table class="device-table">
-            <thead>
-              <tr>
-                <th>Product</th>
-                <th>Path</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each remoteDevices as dev (dev.path)}
-                <tr>
-                  <td>{dev.product}</td>
-                  <td class="mono">{dev.path}</td>
-                  <td>
-                    {#if device.connected && deviceManager.devices.find(d => d.connectionInfo.url === dev.path)}
-                      <button disabled class="connected-btn">Connected</button>
-                    {:else}
-                      <button onclick={() => connectDevice(dev.path)} disabled={connecting}>Connect</button>
-                    {/if}
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
+      {:else}
+        <p class="no-devices">No DSP devices attached. Connect to a server to see available devices.</p>
       {/if}
     </div>
 
     <!-- Summary bar -->
     <div class="summary">
-      <span>Total: {deviceManager.devices.length}</span>
+      <span>Servers: {remoteUrls.length}</span>
+      <span>Devices: {deviceManager.devices.length}</span>
       <span>Master: {#if deviceManager.master}<strong>{deviceManager.master.productName}</strong>{:else}-{/if}</span>
       <span>Slaves: {deviceManager.slaveCount}</span>
     </div>
@@ -221,13 +145,8 @@
   {#if device.connected}
     <div class="status-bar">
       <span class="dot ok"></span>
-      <span>Connected: <strong>{device.productName}</strong></span>
-      {#if deviceManager.slaveCount > 0}
-        <span class="muted">{deviceManager.slaveCount} slave{#if deviceManager.slaveCount > 1}s{/if}</span>
-      {/if}
+      <span>Connected to server</span>
     </div>
-  {:else}
-    <p class="hint">Select a server to connect. Only WebSocket connections are supported.</p>
   {/if}
   </div>
 </div>
@@ -236,20 +155,32 @@
   .device-picker { width: 100%; max-width: 900px; margin: 0 auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-panel); overflow: hidden; }
   .panel-content { padding: 1rem; }
   .connection-section h3 { margin-top: 0; color: var(--text); font-size: 1rem; }
+  .connection-section h4 { margin: 1rem 0 0.5rem; color: var(--text); font-size: .9rem; border-bottom: 1px solid var(--line); padding-bottom: 0.25rem; }
   .hint { color: var(--text-dim); font-style: italic; font-size: .85rem; margin-bottom: .75rem; }
 
   /* URL configuration styling */
   .url-config { background: var(--bg-elev); padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem; }
-  .url-inputs, .add-url-row { display: flex; gap: .5rem; margin-bottom: .75rem; flex-wrap: wrap; }
-  .url-display { flex: 1; min-width: 200px; padding: .4rem .6rem; border-radius: 6px;
-                background: var(--bg-panel); color: var(--text); border: 1px solid var(--line);
-                font-size: .85rem; }
-  .url-input { flex: 1; min-width: 200px; padding: .4rem .6rem; border-radius: 6px;
-               background: var(--bg-panel); color: var(--text); border: 1px solid var(--line);
-               font-size: .85rem; }
-  .url-input:focus { outline: none; border-color: var(--accent); }
 
-  .controls { display: flex; gap: .5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+  /* Server list matching preset list style */
+  .server-list { list-style: none; padding: 0; margin: 0.5rem 0 0.75rem 0; max-height: 200px; overflow-y: auto;
+                 border-top: 1px solid var(--line); }
+  .server-item { display: flex; align-items: center; gap: .5rem; padding: .4rem .6rem; border-bottom: 1px solid var(--line);
+                 background: rgba(255,255,255,.02); font-size: .8rem; }
+  .server-item:last-child { border-bottom: none; }
+  .server-url { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                font-family: monospace; color: var(--text-dim); }
+  .remove-btn { background: #ef4444; color: white; border: none; width: 28px; height: 28px;
+                padding: 0; display: flex; align-items: center; justify-content: center;
+                border-radius: 4px; cursor: pointer; font-size: 1.1rem; line-height: 1; }
+  .remove-btn:hover { background: #dc2626; }
+
+  .add-url-row { display: flex; gap: .5rem; margin-bottom: .75rem; flex-wrap: wrap; }
+  .add-url-row input { flex: 1; min-width: 200px; padding: .4rem .6rem; border-radius: 6px;
+                       background: var(--bg-panel); color: var(--text); border: 1px solid var(--line);
+                       font-size: .85rem; }
+  .add-url-row input:focus { outline: none; border-color: var(--accent); }
+
+  .controls { display: flex; gap: .5rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
 
   button { padding: .4rem .8rem; border-radius: 6px; font-size: .85rem; cursor: pointer;
            transition: all .15s; }
@@ -258,8 +189,7 @@
 
   .primary-btn { background: var(--accent); color: #0a0d12; border: none; font-weight: 600; }
   .secondary-btn { background: var(--bg-panel); color: var(--text); border: 1px solid var(--line); }
-  .remove-btn { background: #ef4444; color: white; border: none; width: 28px; height: 28px;
-                padding: 0; display: flex; align-items: center; justify-content: center; }
+  .disconnect-btn { background: #dc2626; color: white; }
 
   /* Device list table */
   .device-list { overflow-x: auto; margin-top: .5rem; }
@@ -284,31 +214,24 @@
 
   .role-label { margin-left: 6px; font-size: .7rem; color: var(--text-dim); }
   .product { font-weight: 500; color: var(--text); }
-  .type { text-transform: uppercase; font-family: monospace; color: var(--text-dim); font-size: .78rem; white-space: nowrap; }
   .server-ip { font-family: monospace; color: var(--text-dim); font-size: .75rem; word-break: break-all; }
-  .device-id { font-family: monospace; color: var(--text-dim); font-size: .75rem; white-space: nowrap; }
 
   .btn-link { background: none; border: none; color: #f66; cursor: pointer; font-size: .8rem; padding: 0; }
   .btn-link:hover { text-decoration: underline; }
 
+  .no-devices { color: var(--text-dim); font-style: italic; text-align: center; padding: 2rem 1rem; }
   .summary { display: flex; gap: 1.5rem; padding: 0.75rem; border-top: 1px solid var(--line);
              font-size: .8rem; color: var(--text-dim); background: var(--bg-elev); }
   .summary strong { color: var(--text); }
 
-  /* Remote devices section */
-  .remote-devices-section { margin-top: 1rem; }
-  .section-title { color: var(--text-dim); font-size: .85rem; margin-bottom: .5rem; font-weight: 500; }
-  .mono { font-family: monospace; color: var(--text-dim); font-size: .8rem; }
-
   .status-bar { display: flex; align-items: center; gap: .75rem; padding: .75rem 1rem;
                 background: #0a3d0a; color: #bdf5bd; font-size: .85rem; border-top: 1px solid var(--line); }
   .status-bar .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--good); box-shadow: 0 0 6px var(--good); }
-  .muted { opacity: .7; font-size: .8rem; }
 
   @media (max-width: 600px) {
     .device-picker { border-radius: 0; border-left: none; border-right: none; }
     .controls { flex-direction: column; }
     button { width: 100%; }
-    .server-ip { max-width: 150px; }
+    .server-ip { max-width: 200px; }
   }
 </style>
