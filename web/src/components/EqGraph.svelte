@@ -7,9 +7,10 @@
   import type { ChannelEq } from "../eq/types.ts";
   import { PeqType } from "../protocol/commands.ts";
 
-  let { index, extraEqs }: {
+  let { index, extraEqs, color }: {
     index: number;
     extraEqs?: { eq: ChannelEq; color: string }[];
+    color?: string;
   } = $props();
 
   function getEq() {
@@ -152,7 +153,7 @@
   {/if}
 
   <!-- primary summed response -->
-  <path class="sum" d={sumPath} />
+  <path class="sum" style="--c:{color}" d={sumPath} />
 
   <!-- band handles (primary only) -->
   {#each handles as h (h.i)}
@@ -187,12 +188,11 @@
   .grid.zero { stroke: #344256; }
   .xo { stroke: var(--warn); stroke-dasharray: 3 4; opacity: .5; }
   .lab { fill: var(--text-dim); font-size: 11px; font-family: ui-monospace, monospace; user-select: none; }
-  .sum { fill: none; stroke: var(--accent); stroke-width: 2.5; filter: drop-shadow(0 0 6px rgba(56,189,248,.5)); }
+  .sum { fill: none; stroke: var(--c); stroke-width: 2.5; }
   .sum-extra { opacity: .33; stroke-width: 1; filter: none; }
   .handle { fill: var(--c); stroke: #0a0d12; stroke-width: 2; cursor: grab; transition: r .1s; }
   .handle.active { stroke: #fff; filter: drop-shadow(0 0 6px var(--c)); }
   .handle.bypass { opacity: .3; }
   .bnum { fill: #0a0d12; font-size: 9px; font-weight: 700; text-anchor: middle; font-family: ui-monospace, monospace; }
   .xohandle { fill: var(--warn); stroke: #0a0d12; stroke-width: 1.5; cursor: ew-resize; }
-  .readout { width: 33%; padding: 1rem; font-size: .78rem; }
 </style>

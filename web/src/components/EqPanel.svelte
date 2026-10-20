@@ -13,6 +13,9 @@
   // Use externalMode prop directly as the source of truth for display mode
   let mode = $derived<"peq" | "geq">(externalMode ?? "peq");
 
+  // Channel color for graph
+  const color = $derived(`var(--ch-${index})`);
+
 </script>
 
 <div class="eq-panel">
@@ -24,7 +27,7 @@
 
   <!-- GEQ mode -->
   <div class="mode-content geq-mode" style:display={mode === "geq" ? "flex" : "none"}>
-    <EqGraph index={index} extraEqs={extraEqs} />
+    <EqGraph index={index} extraEqs={extraEqs} color={color} />
   </div>
 </div>
 
