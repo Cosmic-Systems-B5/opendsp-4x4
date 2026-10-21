@@ -1,13 +1,36 @@
 // WebSocket connection manager for remote DSP control.
 // Manages WebSocket connections to multiple servers separately from device logic.
+// Supports the new bridge.js protocol with JSON-based messaging.
 
 import { WebSocketTransport } from "../transport/websocket.ts";
+
+export interface ServerInfo {
+  serverId: string;
+  port: number;
+  host: string;
+  mockMode: boolean;
+  mockDeviceCount: number;
+  deviceGuids: Array<{ key: string; guid: string; publishedId: string }>;
+  timestamp: string;
+}
+
+export interface DeviceInfo {
+  id: string;
+  kind: 'hid' | 'mock';
+  path: string;
+  deviceGuid: string;
+  publishedId: string;
+  product: string;
+  connectedAt: string;
+  subscriberCount: number;
+}
 
 export interface ServerConnection {
   id: string;
   url: string;
   productName: string;
   connectedAt: string;
+  serverInfo?: ServerInfo;
 }
 
 class WebSocketManagerState {
@@ -40,6 +63,39 @@ class WebSocketManagerState {
   }
 
   /**
+   * Fetch server info from a WebSocket server's HTTP endpoint
+   */
+  async fetchServerInfo(url: string): Promise<ServerInfo | null> {
+    try {
+      const httpUrl = url.replace(/^ws/, 'http');
+      const res = await fetch(`${httpUrl}/server-info`);
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn(`Could not fetch server info from ${url}:`, e);
+    }
+    return null;
+  }
+
+  /**
+   * Fetch list of devices from a WebSocket server
+   */
+  async fetchDevices(url: string): Promise<DeviceInfo[]> {
+    try {
+      const httpUrl = url.replace(/^ws/, 'http');
+      const res = await fetch(`${httpUrl}/devices`);
+      if (res.ok) {
+        const data = await res.json();
+        return data.devices || [];
+      }
+    } catch (e) {
+      console.warn(`Could not fetch devices from ${url}:`, e);
+    }
+    return [];
+  }
+
+  /**
    * Connect to a WebSocket server
    */
   async connect(url: string, productName: string): Promise<ServerConnection | null> {
@@ -53,11 +109,15 @@ class WebSocketManagerState {
       const transport = new WebSocketTransport(url);
       await transport.open();
 
+      // Fetch server info after connecting
+      const serverInfo = await this.fetchServerInfo(url);
+
       const server: ServerConnection = {
         id: `ws-${this.nextId++}`,
         url,
         productName,
-        connectedAt: new Date().toISOString()
+        connectedAt: new Date().toISOString(),
+        serverInfo: serverInfo || undefined
       };
 
       this.connections.set(url, { transport, server });
@@ -96,6 +156,14 @@ class WebSocketManagerState {
   getTransport(url: string): WebSocketTransport | undefined {
     const conn = this.connections.get(url);
     return conn?.transport;
+  }
+
+  /**
+   * Get server info for a specific URL
+   */
+  getServerInfo(url: string): ServerInfo | undefined {
+    const conn = this.connections.get(url);
+    return conn?.server.serverInfo;
   }
 }
 

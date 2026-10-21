@@ -5,90 +5,332 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>openDSP-4x4 Bridge</title>
     <style>
-        :root { --bg:#1a1a2e; --panel:#2d2d44; --line:#3a3a52; --text:#e6e6ee; --dim:#8b8b9e;
-            --good:#10b981; --accent:#3b82f6; --warn:#fbbf24; --err:#f87171; }
+        :root {
+            --bg:        #14161a;
+            --bg-alt:    #191c21;
+            --panel:     #1e2228;
+            --panel-2:   #23282f;
+            --line:      #2b3138;
+            --line-soft: #262b31;
+            --text:      #d7d9dc;
+            --text-dim:  #8a8f96;
+            --text-faint:#5c6169;
+            --accent:    #6f7d8c;
+            --accent-fg: #cfd6de;
+            --good:      #6b8f7a;
+            --good-fg:   #a7c4b2;
+            --warn:      #9c8a5a;
+            --warn-fg:   #d0c19a;
+            --err:       #9c5f5f;
+            --err-fg:    #d6a8a8;
+            --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+        }
         * { box-sizing: border-box; }
         html, body { margin: 0; }
-        body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg);
-            color: var(--text); font-size: 13px; line-height: 1.35;
-            max-width: 1400px; margin: 0 auto; padding: .75rem; }
-        h1 { font-size: 1.05rem; margin: 0; }
-        h2 { font-size: .9rem; margin: 1rem 0 .5rem; color: var(--dim);
-            text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+        body {
+            font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            font-size: 13px;
+            line-height: 1.4;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: .75rem;
+            font-feature-settings: "tnum" 1;
+        }
+        h1 { font-size: 1rem; margin: 0; font-weight: 600; letter-spacing: .01em; }
+        h2 {
+            font-size: .72rem;
+            margin: 1rem 0 .4rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: .08em;
+            font-weight: 600;
+        }
 
-        .server-id { background: var(--accent); padding: .1rem .4rem; border-radius: 4px;
-            font-family: ui-monospace, monospace; font-size: .75rem; color: white; }
-        .status-ok { color: var(--good); } .status-warn { color: var(--warn); } .status-err { color: var(--err); }
-        .hint { color: var(--dim); font-style: italic; font-size: .78rem; }
-        code { background: #1f2937; padding: .05rem .3rem; border-radius: 3px;
-            font-family: ui-monospace, monospace; font-size: .8em; }
+        code, .mono { font-family: var(--mono); font-size: .82em; }
+        code { background: var(--bg-alt); padding: .05rem .3rem; border-radius: 3px;
+            color: var(--text); }
 
-        .bar { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
-            padding: .5rem .75rem; background: var(--panel); border-radius: 8px;
-            margin-bottom: .5rem; }
+        /* ---------- status colours ---------- */
+        .status-ok   { color: var(--good-fg); }
+        .status-warn { color: var(--warn-fg); }
+        .status-err  { color: var(--err-fg); }
 
-        button { padding: .3rem .7rem; font-size: .78rem; border: none; border-radius: 5px;
-            font-weight: 600; cursor: pointer; color: #0a0d12; background: #e5e7eb; }
-        button.secondary { background: #4b5563; color: white; }
-        button.good { background: var(--good); color: #062016; }
-        button.bad  { background: var(--err); color: #2a0606; }
-        button:disabled { opacity: .5; cursor: default; }
+        /* ---------- server-id badge ---------- */
+        .server-id {
+            display: inline-block;
+            background: var(--panel-2);
+            border: 1px solid var(--line);
+            color: var(--text);
+            padding: .05rem .45rem;
+            border-radius: 3px;
+            font-family: var(--mono);
+            font-size: .74rem;
+            letter-spacing: .04em;
+        }
 
-        .pill { display: inline-block; padding: 0 .4rem; border-radius: 999px;
-            font-size: .65rem; line-height: 1.5; font-weight: 600;
-            background: #374151; color: white; font-family: ui-monospace, monospace;
-            text-transform: uppercase; letter-spacing: .03em; }
-        .pill.hid  { background: #2563eb; }
-        .pill.mock { background: #7c3aed; }
-        .pill.sub  { background: var(--good); color: #062016; }
+        /* ---------- click-to-copy ---------- */
+        .copy {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            gap: .35rem;
+            padding: .1rem .45rem;
+            border-radius: 3px;
+            background: var(--bg-alt);
+            border: 1px solid var(--line-soft);
+            color: var(--text-dim);
+            font-family: var(--mono);
+            font-size: .74rem;
+            cursor: pointer;
+            transition: color .12s, border-color .12s, background .12s;
+            user-select: none;
+        }
+        .copy:hover { color: var(--text); border-color: var(--accent); }
+        .copy:active { background: var(--panel); }
+        .copy.copied {
+            color: var(--good-fg);
+            border-color: var(--good);
+        }
+        .copy .icon {
+            opacity: .6;
+            font-size: .8em;
+            line-height: 1;
+        }
+        .copy:hover .icon { opacity: 1; }
+        .copy.copied .icon { opacity: 1; }
 
-        .device-grid { display: grid; gap: .5rem;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
-        .device-card { background: var(--panel); border: 1px solid var(--line);
-            border-radius: 8px; overflow: hidden; display: flex; flex-direction: column;
-            font-size: .78rem; }
+        /* ---------- bars ---------- */
+        .bar {
+            display: flex;
+            align-items: center;
+            gap: .75rem;
+            flex-wrap: wrap;
+            padding: .5rem .75rem;
+            background: var(--panel);
+            border: 1px solid var(--line-soft);
+            border-radius: 6px;
+            margin-bottom: .5rem;
+        }
+        .bar .sep { flex: 1; }
+        .hint { color: var(--text-faint); font-style: italic; font-size: .76rem; }
+
+        /* ---------- buttons ---------- */
+        button {
+            padding: .28rem .65rem;
+            font-size: .76rem;
+            border: 1px solid var(--line);
+            border-radius: 4px;
+            font-weight: 500;
+            cursor: pointer;
+            background: var(--panel-2);
+            color: var(--text);
+            transition: background .12s, border-color .12s, color .12s;
+        }
+        button:hover { background: var(--line-soft); border-color: var(--accent); }
+        button:active { background: var(--panel); }
+        button:disabled { opacity: .45; cursor: default; }
+
+        button.good {
+            background: transparent;
+            color: var(--good-fg);
+            border-color: var(--good);
+        }
+        button.good:hover { background: rgba(107,143,122,.1); }
+
+        button.bad {
+            background: transparent;
+            color: var(--err-fg);
+            border-color: var(--err);
+        }
+        button.bad:hover { background: rgba(156,95,95,.1); }
+
+        button.secondary {
+            background: transparent;
+            color: var(--text-dim);
+            border-color: var(--line);
+        }
+        button.secondary:hover { color: var(--text); }
+
+        /* ---------- pills ---------- */
+        .pill {
+            display: inline-block;
+            padding: 0 .38rem;
+            border-radius: 3px;
+            font-size: .62rem;
+            line-height: 1.6;
+            font-weight: 600;
+            background: var(--panel-2);
+            color: var(--text-dim);
+            border: 1px solid var(--line);
+            font-family: var(--mono);
+            text-transform: uppercase;
+            letter-spacing: .06em;
+        }
+        .pill.hid   { color: #8fa5c4; border-color: #3a4a5e; background: rgba(60,80,110,.15); }
+        .pill.mock  { color: #a08cc4; border-color: #4a3f5e; background: rgba(90,70,120,.15); }
+        .pill.sub   { color: var(--good-fg); border-color: var(--good); background: rgba(107,143,122,.1); }
+
+        /* ---------- device grid ---------- */
+        .device-grid {
+            display: grid;
+            gap: .5rem;
+            grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+        }
+        .device-card {
+            background: var(--panel);
+            border: 1px solid var(--line-soft);
+            border-radius: 6px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            font-size: .78rem;
+            transition: border-color .15s;
+        }
         .device-card.subscribed { border-color: var(--accent); }
-        .device-card > header { padding: .4rem .6rem; background: #23233a;
-            display: flex; justify-content: space-between;
-            align-items: center; gap: .4rem; font-weight: 600; }
-        .device-card > header .name { overflow: hidden; text-overflow: ellipsis;
-            white-space: nowrap; }
-        .device-card .meta { display: grid; grid-template-columns: 1fr; gap: .1rem;
-            padding: .35rem .6rem; color: var(--dim); font-size: .72rem; }
-        .device-card .meta div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .device-card .meta b { color: var(--text); font-weight: 500;
-            font-family: ui-monospace, monospace; }
-        .device-card .body { padding: .4rem .6rem .5rem; border-top: 1px solid var(--line); }
-        .device-card .buttons { padding: .4rem .6rem; display: flex; gap: .35rem;
-            flex-wrap: wrap; border-top: 1px solid var(--line); }
+        .device-card > header {
+            padding: .4rem .6rem;
+            background: var(--panel-2);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: .4rem;
+            font-weight: 600;
+            border-bottom: 1px solid var(--line-soft);
+        }
+        .device-card > header .name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .device-card .meta {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: .1rem;
+            padding: .35rem .6rem;
+            color: var(--text-dim);
+            font-size: .72rem;
+        }
+        .device-card .meta div {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .device-card .meta b {
+            color: var(--text);
+            font-weight: 500;
+            font-family: var(--mono);
+            font-size: .95em;
+        }
+        .device-card .body {
+            padding: .45rem .6rem .55rem;
+            border-top: 1px solid var(--line-soft);
+        }
+        .device-card .buttons {
+            padding: .4rem .6rem;
+            display: flex;
+            gap: .35rem;
+            flex-wrap: wrap;
+            border-top: 1px solid var(--line-soft);
+        }
 
-        .matrix { display: grid; grid-template-columns: 26px repeat(4, 1fr); gap: 2px;
-            font-family: ui-monospace, monospace; font-size: .62rem; }
-        .matrix .cell { background: var(--bg); padding: 2px 0; text-align: center;
-            border-radius: 2px; min-height: 16px; }
-        .matrix .hdr { background: var(--accent); color: white; font-weight: 700; }
-        .matrix .lbl { background: #4b5563; color: white; text-align: right;
-            padding-right: 4px; font-weight: 700; }
-        .matrix .on  { background: var(--good); color: white; font-weight: 700; }
+        /* ---------- routing matrix ---------- */
+        .matrix {
+            display: grid;
+            grid-template-columns: 24px repeat(4, 1fr);
+            gap: 2px;
+            font-family: var(--mono);
+            font-size: .62rem;
+        }
+        .matrix .cell {
+            background: var(--bg-alt);
+            padding: 2px 0;
+            text-align: center;
+            border-radius: 2px;
+            min-height: 16px;
+            color: var(--text-dim);
+        }
+        .matrix .hdr {
+            color: var(--text-dim);
+            font-weight: 600;
+            letter-spacing: .04em;
+        }
+        .matrix .lbl {
+            color: var(--text-faint);
+            text-align: right;
+            padding-right: 4px;
+        }
+        .matrix .on {
+            background: rgba(107,143,122,.22);
+            color: var(--good-fg);
+            font-weight: 700;
+        }
 
-        .chans { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px;
-            font-family: ui-monospace, monospace; font-size: .62rem; margin-top: .35rem; }
-        .chans .ch { background: var(--bg); border-radius: 2px; padding: 1px 3px;
-            display: flex; justify-content: space-between; }
-        .chans .ch.mute { background: #3a1f1f; color: #fca5a5; }
-        .chans .ch .v { color: var(--good); }
-        .chans .ch.mute .v { color: #fca5a5; }
+        /* ---------- channel chips ---------- */
+        .chans {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 2px;
+            font-family: var(--mono);
+            font-size: .62rem;
+            margin-top: .4rem;
+        }
+        .chans .ch {
+            background: var(--bg-alt);
+            border-radius: 2px;
+            padding: 1px 3px;
+            display: flex;
+            justify-content: space-between;
+            color: var(--text-dim);
+        }
+        .chans .ch .v { color: var(--text); }
+        .chans .ch.mute { color: var(--err-fg); }
+        .chans .ch.mute .v { color: var(--err-fg); }
 
-        .empty { color: var(--dim); font-style: italic; padding: .25rem 0; }
+        .empty {
+            color: var(--text-faint);
+            font-style: italic;
+            padding: .25rem 0;
+            font-size: .76rem;
+        }
 
-        #logs-scroll { max-height: 220px; overflow: auto; }
-        .log-entry { padding: .25rem .5rem; margin-bottom: 2px; background: #23233a;
-            border-radius: 4px; font-size: .72rem; font-family: ui-monospace, monospace;
-            display: flex; gap: .5rem; }
-        .log-entry .ts { color: var(--dim); }
-        .log-entry .m { color: #60a5fa; min-width: 3.5em; }
-        .log-entry .p { color: var(--text); overflow: hidden; text-overflow: ellipsis;
-            white-space: nowrap; }
+        /* ---------- message log ---------- */
+        #msgs-scroll { max-height: 320px; overflow: auto; }
+        .msg-entry {
+            display: grid;
+            grid-template-columns: auto auto auto 1fr;
+            gap: .4rem;
+            align-items: baseline;
+            padding: .22rem .5rem;
+            margin-bottom: 1px;
+            background: var(--bg-alt);
+            border-radius: 3px;
+            font-size: .71rem;
+            font-family: var(--mono);
+            border-left: 2px solid transparent;
+        }
+        .msg-entry.inbound  { border-left-color: #3a5a4a; }
+        .msg-entry.outbound { border-left-color: #3a4a5e; }
+        .msg-entry .ts  { color: var(--text-faint); }
+        .msg-entry .dev { color: var(--text-dim); max-width: 12ch;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .msg-entry .dir { color: var(--text-faint); font-size: .62rem; text-transform: uppercase; }
+        .msg-entry .summary {
+            color: var(--text);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-width: 0;
+        }
+        .msg-entry .summary.json { color: #a0b8d4; }
+        .msg-entry .summary.hex  { color: #a0c4a8; }
+        .msg-entry .summary.text { color: #c4b8a0; }
+        .msg-entry .summary::before {
+            content: attr(data-prefix);
+            color: var(--text-faint);
+            margin-right: .3rem;
+        }
     </style>
 </head>
 <body>
@@ -97,18 +339,21 @@
     <h1>openDSP-4x4</h1>
     <span class="server-id" id="server-id">…</span>
     <span>Status: <span id="status">…</span></span>
-    <span style="flex:1"></span>
-    <span class="hint">ws: <code id="ws-url">ws://…</code></span>
+    <span class="sep"></span>
+    <span class="copy" id="ws-copy" title="Click to copy">
+    <span class="icon">⧉</span>
+    <span id="ws-url" class="mono">ws://…</span>
+  </span>
 </div>
 
 <div class="bar">
   <span>Devices: <b id="dev-count">0</b>
      (<span id="hid-count">0</span> HID, <span id="mock-count">0</span> mock)</span>
     <span>Mock: <b id="mock-state">…</b></span>
-    <span style="flex:1"></span>
+    <span class="sep"></span>
     <button id="add-mock" class="good">+ Add mock</button>
     <button id="remove-all-mock" class="bad">− Remove all mock</button>
-    <button id="toggle-mock">Toggle mock</button>
+    <button id="toggle-mock" class="secondary">Toggle mock</button>
     <button id="sub-all" class="secondary">Sub all</button>
     <button id="unsub-all" class="secondary">Unsub all</button>
 </div>
@@ -118,8 +363,16 @@
 </div>
 
 <h2 style="display:flex;align-items:center;gap:.5rem;">
-    Logs
-    <button id="clear-logs" class="secondary" style="font-size:.7rem;padding:.1rem .4rem;margin-left:auto;">clear</button>
+    Messages
+    <button id="clear-msgs" class="secondary"
+            style="font-size:.7rem;padding:.1rem .4rem;margin-left:auto;">clear</button>
+</h2>
+<div id="msgs-scroll"><div id="msgs"><div class="empty">—</div></div></div>
+
+<h2 style="display:flex;align-items:center;gap:.5rem;">
+    Connection logs
+    <button id="clear-logs" class="secondary"
+            style="font-size:.7rem;padding:.1rem .4rem;margin-left:auto;">clear</button>
 </h2>
 <div id="logs-scroll"><div id="logs"><div class="empty">—</div></div></div>
 
@@ -134,6 +387,9 @@
         const subscriptions = new Set();
         const settings = new Map();
 
+        // ----------------------------------------------------------------
+        // Server info / status
+        // ----------------------------------------------------------------
         async function loadServerInfo() {
             try {
                 const info = await (await fetch('/server-info')).json();
@@ -161,15 +417,137 @@
                 const logs = await (await fetch('/logs/connections')).json();
                 const el = $('logs');
                 if (!logs.length) { el.innerHTML = '<div class="empty">—</div>'; return; }
-                el.innerHTML = logs.slice(0, 200).map(l =>
-                    `<div class="log-entry">
+                el.innerHTML = logs.slice(0, 200).map(l => {
+                    const cls = l.type === 'http_request' ? 'http' : 'ws';
+                    return `<div class="log-entry ${cls}">
            <span class="ts">${esc(l.timestamp)}</span>
            <span class="m">${esc(l.method || l.type)}</span>
            <span class="p">${esc(l.path || '')}</span>
-         </div>`).join('');
+         </div>`;
+                }).join('');
             } catch (e) { console.error(e); }
         }
 
+        // ----------------------------------------------------------------
+        // Message log (HID / WS payloads)
+        // ----------------------------------------------------------------
+        const TRUNC = 120;
+
+        function summarize(entry) {
+            const s = entry.summary?.text ?? '';
+            const kind = entry.summary?.kind ?? 'none';
+            const short = s.length > TRUNC ? s.slice(0, TRUNC) + '…' : s;
+            return { kind, short, full: s };
+        }
+
+        function renderMessages(logs) {
+            const el = $('msgs');
+            if (!logs.length) { el.innerHTML = '<div class="empty">—</div>'; return; }
+            el.innerHTML = logs.slice(0, 200).map(l => {
+                const kind = l.summary?.kind ?? 'none';
+                const full = l.summary?.text ?? '';
+                const short = full.length > TRUNC ? full.slice(0, TRUNC) + '…' : full;
+                const dev = l.publishedId ? l.publishedId.slice(-12) : (l.deviceId || '—');
+                const prefix =
+                    kind === 'json' ? 'JSON' :
+                        kind === 'hex'  ? 'HEX'  :
+                            kind === 'text' ? 'TXT'  : '';
+                return `
+        <div class="msg-entry ${esc(l.direction)}">
+          <span class="ts">${esc((l.timestamp || '').slice(11, 23))}</span>
+          <span class="dev" title="${esc(l.publishedId || l.deviceId || '')}">${esc(dev)}</span>
+          <span class="dir">${esc(l.direction || '')}</span>
+          <span class="summary ${esc(kind)}"
+                data-prefix="${esc(prefix)}"
+                title="${esc(full.length > TRUNC ? full : '')}">${esc(short)}</span>
+        </div>`;
+            }).join('');
+        }
+
+        async function loadMessages() {
+            try {
+                const logs = await (await fetch('/logs/messages')).json();
+                renderMessages(logs);
+            } catch (e) { console.error(e); }
+        }
+
+        $('clear-msgs').onclick = () => {
+            $('msgs').innerHTML = '<div class="empty">—</div>';
+        };
+        async function loadMessages() {
+            try {
+                const logs = await (await fetch('/logs/messages')).json();
+                renderMessages(logs);
+            } catch (e) { console.error(e); }
+        }
+
+        // Toggle expand on click
+        $('msgs').addEventListener('click', (e) => {
+            const row = e.target.closest('.msg-entry');
+            if (!row) return;
+            row.classList.toggle('expanded');
+            const summary = row.querySelector('.summary');
+            const full = row.dataset.full || '';
+            if (row.classList.contains('expanded')) {
+                summary.textContent = full;
+            } else {
+                const short = full.length > TRUNC ? full.slice(0, TRUNC) + '…' : full;
+                summary.textContent = short;
+            }
+        });
+
+        $('clear-msgs').onclick = () => {
+            $('msgs').innerHTML = '<div class="empty">—</div>';
+        };
+
+        // ----------------------------------------------------------------
+        // Click-to-copy on the WS address
+        // ----------------------------------------------------------------
+        async function copyText(text) {
+            // Try the async Clipboard API first (requires secure context or localhost)
+            if (navigator.clipboard && window.isSecureContext) {
+                try { await navigator.clipboard.writeText(text); return true; }
+                catch { /* fall through to legacy path */ }
+            }
+            // Legacy fallback: hidden textarea + execCommand
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                ta.style.top = '0';
+                ta.style.left = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                const ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+                return ok;
+            } catch {
+                return false;
+            }
+        }
+
+        function flashCopied(el, ok) {
+            const icon = el.querySelector('.icon');
+            const prev = icon.textContent;
+            el.classList.add('copied');
+            icon.textContent = ok ? '✓' : '✕';
+            setTimeout(() => {
+                el.classList.remove('copied');
+                icon.textContent = prev;
+            }, 1200);
+        }
+
+        $('ws-copy').addEventListener('click', async () => {
+            const text = $('ws-url').textContent.trim();
+            if (!text || text === 'ws://…') return;
+            const ok = await copyText(text);
+            flashCopied($('ws-copy'), ok);
+        });
+
+        // ----------------------------------------------------------------
+        // WebSocket bridge
+        // ----------------------------------------------------------------
         function connect() {
             const proto = location.protocol === 'https:' ? 'wss' : 'ws';
             ws = new WebSocket(`${proto}://${location.host}/`);
@@ -190,6 +568,9 @@
                 } else if (msg.type === 'subscribed') {
                     subscriptions.add(msg.deviceId);
                     render();
+                } else if (msg.type === 'unsubscribed') {
+                    subscriptions.delete(msg.deviceId);
+                    render();
                 } else if (msg.type === 'device_gone') {
                     subscriptions.delete(msg.deviceId);
                     settings.delete(msg.deviceId);
@@ -205,6 +586,9 @@
             ws.onerror = (e) => console.error('WS error:', e);
         }
 
+        // ----------------------------------------------------------------
+        // Rendering
+        // ----------------------------------------------------------------
         function render() {
             const grid = $('device-grid');
             if (devices.size === 0) {
@@ -261,21 +645,32 @@
           ${routing}
           ${chans}
         </div>
+        <div class="buttons">
+          ${subscribed
+                ? `<button class="secondary" data-action="unsub" data-id="${esc(id)}">Unsub</button>`
+                : `<button class="good"     data-action="sub"   data-id="${esc(id)}">Sub</button>`}
+          ${isMock
+                ? `<button class="bad" style="margin-left:auto"
+                       data-action="remove" data-id="${esc(id)}"
+                       title="Remove this mock device">×</button>`
+                : ''}
+        </div>
       </div>`;
         }
 
+        // ----------------------------------------------------------------
+        // Actions
+        // ----------------------------------------------------------------
         $('device-grid').addEventListener('click', (e) => {
             const btn = e.target.closest('button'); if (!btn) return;
             const { action, id } = btn.dataset;
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
             if (action === 'sub')   return ws.send(JSON.stringify({ type: 'action', action: 'subscribe',   deviceId: id }));
-            if (action === 'unsub') return ws.send(JSON.stringify({ type: 'action', action: 'unsubscribe', deviceId: id }));
-            if (action === 'status') {
-                const frame = [0x10, 0x02, 0x01, 0x00, 0x01, 0x10, 0x10, 0x03, 0x6e];
-                while (frame.length < 64) frame.push(0);
-                const data = btoa(String.fromCharCode(...frame));
-                return ws.send(JSON.stringify({ type: 'request', deviceId: id, data }));
+            if (action === 'unsub') {
+                subscriptions.delete(id);
+                render();
+                return ws.send(JSON.stringify({ type: 'action', action: 'unsubscribe', deviceId: id }));
             }
             if (action === 'remove') {
                 fetch('/mock', {
@@ -333,6 +728,9 @@
 
         $('clear-logs').onclick = () => { $('logs').innerHTML = '<div class="empty">—</div>'; };
 
+        // ----------------------------------------------------------------
+        // SSE: device list
+        // ----------------------------------------------------------------
         const devEs = new EventSource('/devices/changes');
         devEs.onmessage = (e) => {
             try {
@@ -347,12 +745,17 @@
             } catch (err) { console.error(err); }
         };
 
+        // ----------------------------------------------------------------
+        // Boot
+        // ----------------------------------------------------------------
         loadServerInfo();
         loadStatus();
         loadLogs();
+        loadMessages();
         connect();
         setInterval(loadStatus, 5000);
         setInterval(loadLogs, 5000);
+        setInterval(loadMessages, 2000);
     })();
 </script>
 </body>

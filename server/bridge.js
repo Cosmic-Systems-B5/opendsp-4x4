@@ -117,7 +117,7 @@ const b64encode = (bytes) => Buffer.from(bytes).toString('base64');
 const b64decode = (str) => Array.from(Buffer.from(str, 'base64'));
 
 // ---------------------------------------------------------------------------
-// Logging
+// Logs
 // ---------------------------------------------------------------------------
 
 const connectionLogs = [];
@@ -140,17 +140,51 @@ function addConnectionLog(entry) {
     if (connectionLogs.length > MAX_LOGS) connectionLogs.pop();
 }
 
+// Try to summarize payload as JSON, then as string, then as hex.
+function summarizeEntry(entry) {
+    if (entry.payloadHex) return { kind: 'hex', text: entry.payloadHex };
+    if (entry.payloadJson) return { kind: 'json', text: entry.payloadJson };
+    if (entry.payloadBase64) {
+        try {
+            const bytes = b64decode(entry.payloadBase64);
+            const str = tryDecodeString(bytes);
+            // Try JSON if the string is bracket-shaped
+            if (str && /^[\s[{]/.test(str)) {
+                try {
+                    entry.payloadJson = JSON.stringify(JSON.parse(str));
+                    entry.payloadKind = 'json';
+                    return { kind: 'json', text: entry.payloadJson };
+                } catch { /* not JSON */ }
+            }
+            entry.payloadHex = bytesToHex(bytes);
+            entry.payloadKind = 'hex';
+            return { kind: 'hex', text: entry.payloadHex };
+        } catch { /* ignore */ }
+    }
+    if (entry.payloadText) return { kind: 'text', text: entry.payloadText };
+    return { kind: 'none', text: '' };
+}
+
 function addMessageLog(entry) {
+    // Decode base64 payload if present
     if (entry.payload && typeof entry.payload === 'string' && !entry.payloadHex) {
         try {
             const bytes = b64decode(entry.payload);
             entry.payloadBase64 = entry.payload;
             entry.payloadHex = bytesToHex(bytes);
-            entry.payloadString = tryDecodeString(bytes);
+            const str = tryDecodeString(bytes);
+            if (str && /^[\s[{]/.test(str)) {
+                try {
+                    entry.payloadJson = JSON.stringify(JSON.parse(str));
+                } catch { /* fall through to hex */ }
+            } else if (str) {
+                entry.payloadText = str;
+            }
         } catch {
             entry.payloadText = entry.payload;
         }
     }
+    entry.summary = summarizeEntry(entry);
     messageLogs.unshift(entry);
     if (messageLogs.length > MAX_LOGS) messageLogs.pop();
 }
@@ -511,16 +545,25 @@ async function serveStatic(res, name) {
     try {
         const data = await readFile(join(PUBLIC_DIR, name));
         const ext = extname(name);
-        res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+        res.writeHead(200, {
+            'Content-Type': MIME[ext] || 'application/octet-stream',
+            'Access-Control-Allow-Origin': '*'
+        });
         res.end(data);
     } catch {
-        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.writeHead(404, {
+            'Content-Type': 'text/plain',
+            'Access-Control-Allow-Origin': '*'
+        });
         res.end('Not found');
     }
 }
 
 function json(res, code, obj) {
-    res.writeHead(code, { 'Content-Type': 'application/json' });
+    res.writeHead(code, {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*'
+    });
     res.end(JSON.stringify(obj));
 }
 
@@ -542,6 +585,19 @@ async function getLocalAddress() {
 // ---------------------------------------------------------------------------
 
 const httpServer = createServer(async (req, res) => {
+    // --- CORS: allow any origin, including preflight ---
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Max-Age', '86400');
+
+    // Answer preflight immediately
+    if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        res.end();
+        return;
+    }
+
     addConnectionLog({
         timestamp: new Date().toISOString(),
         type: 'http_request',
@@ -665,6 +721,7 @@ const httpServer = createServer(async (req, res) => {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache',
             Connection: 'keep-alive',
+            'Access-Control-Allow-Origin': '*'
         });
         const cb = (snap) => {
             try {
@@ -681,7 +738,7 @@ const httpServer = createServer(async (req, res) => {
         return;
     }
 
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.writeHead(404, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
     res.end('openDSP-4x4 bridge');
 });
 
@@ -744,6 +801,12 @@ function unsubscribe(ws, deviceId) {
     const device = devices.get(deviceId);
     if (device) device.subscribers.delete(ws);
     getSubs(ws).delete(deviceId);
+    sendToClient(ws, {
+        type: 'unsubscribed',
+        deviceId,
+        deviceGuid: device ? device.deviceGuid : null,
+        publishedId: device ? device.publishedId : null,
+    });
     notifyDevicesChanged();
     return true;
 }

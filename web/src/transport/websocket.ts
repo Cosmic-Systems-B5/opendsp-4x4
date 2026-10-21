@@ -1,14 +1,92 @@
 // WebSocket transport for remote DSP control over a HID/WebSocket bridge.
 // The server proxies USB HID reports: request frames are sent to the server,
 // and reply frames are received from the server.
+//
+// Protocol format (bridge.js v2):
+//   JSON messages with type field:
+//     - 'report': device response data, base64-encoded in 'data' field
+//     - 'request': host command, base64-encoded in 'data' field
+//     - 'subscribed': confirmation of device subscription
+//     - 'settings_update': device settings change notification
+//     - 'devices': list of available devices (serverId + devices array)
+//
+// Device identifiers:
+//   - deviceGuid: "DSP" + 5-char alphanumeric (stable per physical device)
+//   - publishedId: "SERVER_ID-DSP_GUID" (e.g., "Q7X2K-DSP7C4H9")
 
 import type { DspTransport } from "./transport.ts";
+
+export interface DeviceReport {
+  type: 'report';
+  deviceId: string;
+  deviceGuid: string;
+  publishedId: string;
+  data: string; // base64-encoded binary
+}
+
+export interface RequestMessage {
+  type: 'request';
+  deviceId?: string;
+  data: string; // base64-encoded frame
+}
+
+export interface SubscribedMessage {
+  type: 'subscribed';
+  deviceId: string;
+  deviceGuid: string;
+  publishedId: string;
+  product: string;
+  kind: 'hid' | 'mock';
+}
+
+export interface SettingsUpdateMessage {
+  type: 'settings_update';
+  deviceId: string;
+  deviceGuid: string;
+  publishedId: string;
+  timestamp: string;
+  channels: Array<{
+    index: number;
+    name: string;
+    gainDb: number;
+    mute: boolean;
+    polarity: boolean;
+    delayMs: number | null;
+    eq: {
+      hpf: { freqHz: number; slope: number };
+      lpf: { freqHz: number; slope: number };
+      bands: Array<{ type: number; freqHz: number; gainDb: number; bwOct: number }>;
+    };
+  }>;
+  routing: number[];
+}
+
+export interface DevicesMessage {
+  type: 'devices';
+  serverId: string;
+  devices: Array<{
+    id: string;
+    kind: 'hid' | 'mock';
+    path: string;
+    deviceGuid: string;
+    publishedId: string;
+    product: string;
+    connectedAt: string;
+    subscribed: boolean;
+  }>;
+}
 
 export class WebSocketTransport implements DspTransport {
   private listeners = new Set<(r: Uint8Array) => void>();
   private pending: ((r: Uint8Array | null) => void) | null = null;
   private chain: Promise<unknown> = Promise.resolve();
   private closed = false;
+
+  // Device info from subscription
+  public deviceGuid?: string;
+  public publishedId?: string;
+  public productName = "DSP 4x4 (remote)";
+  public kind: 'hid' | 'mock' = 'hid';
 
   static supported(): boolean {
     return typeof WebSocket !== "undefined";
@@ -17,7 +95,6 @@ export class WebSocketTransport implements DspTransport {
   constructor(public readonly url: string) {}
 
   get isOpen(): boolean { return this.ws?.readyState === WebSocket.OPEN; }
-  get productName(): string { return "DSP 4x4 (remote)"; }
 
   private ws: WebSocket | null = null;
   private messageHandler?: (e: MessageEvent) => void;
@@ -32,18 +109,29 @@ export class WebSocketTransport implements DspTransport {
       this.messageHandler = (e: MessageEvent) => {
         try {
           if (typeof e.data === "string") {
-            // Server sends JSON with type and data fields
             const msg = JSON.parse(e.data);
-            if (msg.type === 'report' && typeof msg.data === 'string') {
-              // Base64-encoded binary data - handle gracefully if invalid
-              const bytes = new Uint8Array(atob(msg.data).split("").map((c) => c.charCodeAt(0)));
-              this.handleReport(bytes);
+
+            // Handle different message types from bridge.js
+            switch (msg.type) {
+              case 'report':
+                this.handleReportMessage(msg);
+                break;
+              case 'subscribed':
+                this.handleSubscribedMessage(msg);
+                break;
+              case 'settings_update':
+                this.handleSettingsUpdate(msg);
+                break;
+              case 'devices':
+                console.log('Device list update:', msg.devices);
+                break;
             }
           } else if (e.data instanceof ArrayBuffer) {
+            // Handle raw binary data (legacy fallback)
             this.handleReport(new Uint8Array(e.data));
           }
         } catch (err) {
-          console.warn(`WebSocket: Failed to parse message data`, err);
+          console.warn(`WebSocket: Failed to parse message`, err);
         }
       };
 
@@ -98,6 +186,41 @@ export class WebSocketTransport implements DspTransport {
     }
   }
 
+  /**
+   * Parse a report message and extract the binary data
+   */
+  private handleReportMessage(msg: DeviceReport): void {
+    try {
+      if (typeof msg.data === 'string') {
+        // Base64-encoded binary data
+        const bytes = new Uint8Array(msg.data.split('').map(c => c.charCodeAt(0)));
+        this.handleReport(bytes);
+      }
+    } catch (err) {
+      console.warn(`WebSocket: Failed to decode report data`, err);
+    }
+  }
+
+  /**
+   * Handle subscription confirmation message
+   */
+  private handleSubscribedMessage(msg: SubscribedMessage): void {
+    this.deviceGuid = msg.deviceGuid;
+    this.publishedId = msg.publishedId;
+    this.productName = msg.product;
+    this.kind = msg.kind;
+    console.log(`Subscribed to device: ${msg.publishedId} (${msg.kind})`);
+  }
+
+  /**
+   * Handle settings update message
+   */
+  private handleSettingsUpdate(msg: SettingsUpdateMessage): void {
+    // This is informational - the transport doesn't act on it directly
+    // but we could notify listeners if needed
+    console.debug('Settings update received', msg);
+  }
+
   private handleReport(report: Uint8Array): void {
     if (this.pending && !this.closed) {
       const resolve = this.pending;
@@ -135,8 +258,8 @@ export class WebSocketTransport implements DspTransport {
         // Send frame as base64-encoded JSON message
         const data = btoa(String.fromCharCode(...frame));
         try {
-          const msg = JSON.stringify({ type: 'request', data });
-          this.ws!.send(msg);
+          const msg: RequestMessage = { type: 'request', data };
+          this.ws!.send(JSON.stringify(msg));
         } catch (e) {
           if (this.pending === resolve) { this.pending = null; resolve(null); }
         }

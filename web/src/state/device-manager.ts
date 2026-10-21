@@ -107,7 +107,7 @@ class DeviceManagerState {
     return [...this.servers];
   }
 
-  connect(deviceStore: typeof defaultDevice, connectionInfo: ConnectedDevice['connectionInfo'], transportType: 'usb' | 'websocket', serverGuid?: string): void {
+  connect(deviceStore: typeof defaultDevice, connectionInfo: ConnectedDevice['connectionInfo'], transportType: 'usb' | 'websocket', serverGuid?: string, deviceGuid?: string): void {
     // Determine the unique identifier for this device
     const identifier = transportType === 'usb' ? connectionInfo.path : connectionInfo.url;
 
@@ -131,9 +131,6 @@ class DeviceManagerState {
     }
 
     const role = this.devices.length === 0 ? 'master' : 'slave';
-
-    // Get deviceGuid from store if available
-    const deviceGuid = (deviceStore as any).deviceGuid;
 
     const connectedDevice: ConnectedDevice = {
       id: `${transportType}-${this.nextId++}`,

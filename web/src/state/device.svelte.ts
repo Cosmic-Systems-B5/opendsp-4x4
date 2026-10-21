@@ -87,8 +87,9 @@ export class DeviceStore {
 
     for (const serverUrl of urlsToTry) {
       try {
-        // Fetch server GUID from the server before connecting
+        // Fetch server info and devices from the server before connecting
         let serverGuid: string | undefined;
+        let availableDevices: Array<{id: string, deviceGuid: string, publishedId: string}> = [];
         try {
           const httpUrl = serverUrl.replace(/^ws/, 'http');
           const res = await fetch(`${httpUrl}/server-info`);
@@ -96,13 +97,26 @@ export class DeviceStore {
             const data = await res.json();
             serverGuid = data.serverId;
           }
+          // Also fetch devices list to get available device GUIDs
+          const devicesRes = await fetch(`${httpUrl}/devices`);
+          if (devicesRes.ok) {
+            const devicesData = await devicesRes.json();
+            availableDevices = devicesData.devices || [];
+          }
         } catch (e) {
           console.warn(`Could not fetch server info from ${serverUrl}:`, e);
         }
 
+        // Check if there are any devices available
+        if (availableDevices.length === 0) {
+          this.error = "No DSP devices connected to server. Please connect a device or enable mock mode.";
+          console.log(`Server ${serverUrl} has no devices available`);
+          continue; // Try next URL
+        }
+
         const t = new WebSocketTransport(serverUrl.trim());
         this.serverGuid = serverGuid;
-        await this._bind(t);
+        await this._bind(t, availableDevices);
         console.log(`Connected to server: ${serverUrl} (GUID: ${serverGuid || 'N/A'})`);
         return;
       } catch (e) {
@@ -123,7 +137,26 @@ export class DeviceStore {
     // Try to connect to all configured URLs until one succeeds
     for (const url of webSocketUrls) {
       try {
-        await this._bind(new WebSocketTransport(url.trim()));
+        // Pre-fetch device info for this URL
+        let availableDevices: Array<{id: string, deviceGuid: string, publishedId: string}> = [];
+        try {
+          const httpUrl = url.replace(/^ws/, 'http');
+          const res = await fetch(`${httpUrl}/devices`);
+          if (res.ok) {
+            const data = await res.json();
+            availableDevices = data.devices || [];
+          }
+        } catch (e) {
+          console.warn(`Could not fetch devices from ${url}:`, e);
+        }
+
+        // Check if there are any devices available
+        if (availableDevices.length === 0) {
+          console.log(`Server ${url} has no devices available`);
+          continue; // Try next URL
+        }
+
+        await this._bind(new WebSocketTransport(url.trim()), availableDevices);
         console.log(`Auto-connected to: ${url}`);
         return;
       } catch (e) {
@@ -133,42 +166,81 @@ export class DeviceStore {
     this.error = "No available servers";
   }
 
-  private async _bind(t: WebSocketTransport): Promise<void> {
+  private async _bind(t: WebSocketTransport, availableDevices?: Array<{id: string, deviceGuid: string, publishedId: string}>): Promise<void> {
     await t.open();
+
+    // Subscribe to all devices after WebSocket connection is established
+    this.subscribeToAllDevices(t);
+
     this.dsp = new Dsp(t);
     this.version = await this.dsp.getVersion(); // self-wakes (0x10 then 0x13)
     this.productName = t.productName || "DSP 4x4 (remote)";
     this.connected = true;
     this.error = "";
+
+    // Use deviceGuid from transport if available (set via 'subscribed' message)
+    if (t.deviceGuid) {
+      this.deviceGuid = t.deviceGuid;
+    } else {
+      // Fallback: try to find a matching device in the devices list
+      const httpUrl = t.url.replace(/^ws:/, 'http:');
+      try {
+        const res = await fetch(`${httpUrl}/devices`);
+        if (res.ok) {
+          const data = await res.json();
+          // Find the first subscribed or available device
+          const device = (data.devices || []).find((d: any) => d.subscribed === true);
+          if (device?.deviceGuid) {
+            this.deviceGuid = device.deviceGuid;
+            console.log(`Found device GUID via devices list: ${device.deviceGuid}`);
+          }
+        }
+      } catch (e) {
+        console.warn('Could not fetch device info:', e);
+      }
+    }
+
     try { await this.hydrate(); } catch { /* readback is best-effort; UI keeps defaults */ }
     this.startMeters();
-
-    // Fetch and set deviceGuid from server
-    const httpUrl = t.url.replace(/^ws:/, 'http:');
-    try {
-      const res = await fetch(`${httpUrl}/connections`);
-      if (res.ok) {
-        const data = await res.json();
-        // Find the connection matching this URL and get its deviceGuid
-        const connection = data.connections.find((c: any) => c.path === t.url || c.url === t.url);
-        if (connection?.deviceGuid) {
-          this.deviceGuid = connection.deviceGuid;
-          console.log(`Device GUID for ${t.url}: ${connection.deviceGuid}`);
-        }
-      }
-    } catch (e) {
-      console.warn('Could not fetch device info:', e);
-    }
 
     // Register with DeviceManager
     deviceManager.connect(this, {
       url: t.url,
       productName: this.productName
-    }, 'websocket', this.serverGuid);
+    }, 'websocket', this.serverGuid, this.deviceGuid);
 
     // Save connection state to localStorage
     this.saveConnectionState();
     deviceManager.saveConnectionState();
+  }
+
+  /**
+   * Send subscription action to bridge.js server
+   */
+  private subscribeToAllDevices(t: WebSocketTransport): void {
+    if (t.isOpen && t.ws) {
+      const msg = JSON.stringify({ type: 'action', action: 'subscribe_all' });
+      try {
+        t.ws.send(msg);
+        console.log('Sent subscribe_all action to bridge.js server');
+      } catch (e) {
+        console.warn('Failed to send subscription message:', e);
+      }
+    } else {
+      // If not open yet, wait for open event
+      const checkAndSubscribe = () => {
+        if (t.isOpen && t.ws) {
+          const msg = JSON.stringify({ type: 'action', action: 'subscribe_all' });
+          try {
+            t.ws.send(msg);
+            console.log('Sent subscribe_all action to bridge.js server');
+          } catch (e) {
+            console.warn('Failed to send subscription message:', e);
+          }
+        }
+      };
+      setTimeout(checkAndSubscribe, 100);
+    }
   }
 
   /** Public version of _bind for direct transport attachment (e.g., multi-device scenarios) */
