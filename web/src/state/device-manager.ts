@@ -20,6 +20,7 @@ export interface ConnectedDevice {
   };
   serverGuid?: string;      // Unique GUID of the WebSocket server
   deviceGuid?: string;      // Unique GUID of this DSP device (from server)
+  connected: boolean;       // Whether this device is currently connected
 }
 
 // WebSocket server connection info (separate from devices)
@@ -89,8 +90,13 @@ class DeviceManagerState {
     if (idx >= 0) {
       this.servers.splice(idx, 1);
     }
-    // Also disconnect any devices on this server
-    this.devices = this.devices.filter(d => d.connectionInfo.url !== url);
+    // Also mark any devices on this server as disconnected
+    for (const device of this.devices) {
+      if (device.connectionInfo.url === url && device.connected) {
+        device.connected = false;
+        console.log(`Device ${device.id} marked as disconnected from server ${url}`);
+      }
+    }
   }
 
   /**
@@ -135,7 +141,8 @@ class DeviceManagerState {
       transportType,
       connectionInfo,
       serverGuid,
-      deviceGuid
+      deviceGuid,
+      connected: true
     };
 
     this.devices.push(connectedDevice);
@@ -145,22 +152,37 @@ class DeviceManagerState {
     const deviceToDisconnect = this.devices.find(d => d.id === id);
     if (!deviceToDisconnect) return;
 
-    const idx = this.devices.findIndex(d => d.id === id);
-    if (idx >= 0) {
-      this.devices.splice(idx, 1);
+    // Mark as disconnected instead of removing from list
+    deviceToDisconnect.connected = false;
 
-      // If we disconnected the master and there are still devices connected,
-      // make the first one the new master
-      if (deviceToDisconnect.role === 'master' && this.devices.length > 0) {
-        this.devices[0]!.role = 'master';
+    // If we disconnected the master and there are still connected devices,
+    // make the first connected one the new master
+    if (deviceToDisconnect.role === 'master') {
+      const connectedDevices = this.devices.filter(d => d.connected);
+      if (connectedDevices.length > 0 && connectedDevices[0]!.role !== 'master') {
+        connectedDevices[0]!.role = 'master';
       }
+    }
 
-      // If we disconnected a slave, no role change needed
+    console.log(`Device ${id} disconnected, marked as ${deviceToDisconnect.role}`);
+  }
+
+  /**
+   * Reconnect a previously disconnected device
+   */
+  reconnect(id: string): void {
+    const device = this.devices.find(d => d.id === id);
+    if (device) {
+      device.connected = true;
+      console.log(`Device ${id} reconnected`);
     }
   }
 
   disconnectAll(): void {
-    this.devices = [];
+    for (const device of this.devices) {
+      device.connected = false;
+    }
+    console.log('All devices marked as disconnected');
   }
 
   broadcastChannelUpdate(channelIndex: number, updates: Partial<Channel>): void {

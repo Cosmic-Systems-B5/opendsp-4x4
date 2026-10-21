@@ -70,6 +70,23 @@
     deviceManager.disconnect(id);
   }
 
+  function reconnectDSP(id: string) {
+    // Reconnect a previously disconnected device
+    const deviceToReconnect = deviceManager.devices.find(d => d.id === id);
+    if (deviceToReconnect && deviceToReconnect.connectionInfo.url) {
+      console.log(`Reconnecting to ${deviceToReconnect.connectionInfo.url}`);
+      void connectServer(deviceToReconnect.connectionInfo.url);
+    }
+  }
+
+  function removeSavedDevice(id: string) {
+    // Remove a saved/disconnected device from the list
+    const idx = deviceManager.devices.findIndex(d => d.id === id);
+    if (idx >= 0) {
+      deviceManager.devices.splice(idx, 1);
+    }
+  }
+
   // Server URL management
   let newServerUrl = $state("");
   let showUrlInput = $state(false);
@@ -120,7 +137,7 @@
       </ul>
 
       <!-- Connected DSP Devices table (original style) -->
-      <h4>Connected DSP Units ({deviceManager.devices.length})</h4>
+      <h4>Connected DSP Units ({deviceManager.devices.filter(d => d.connected).length} connected, {deviceManager.devices.length - deviceManager.devices.filter(d => d.connected).length} saved)</h4>
       <div class="device-list">
         {#if deviceManager.devices.length > 0}
           <table class="device-table">
@@ -136,9 +153,13 @@
             </thead>
             <tbody>
               {#each deviceManager.devices as dev (dev.id)}
-                <tr class:master={dev.role === 'master'} class:slave={dev.role === 'slave'}>
+                <tr class:master={dev.role === 'master'} class:slave={dev.role === 'slave'} class:disconnected={!dev.connected}>
                   <td class="status-cell">
-                    <span class="dot ok"></span>
+                    {#if dev.connected}
+                      <span class="dot ok"></span>
+                    {:else}
+                      <span class="dot disconnected" title="Device saved for reconnection"></span>
+                    {/if}
                   </td>
                   <td>
                     <span class="role-badge" class:role-master={dev.role === 'master'} class:role-slave={dev.role === 'slave'}>
@@ -150,10 +171,17 @@
                   <td class="guid-cell" title="Server GUID">{dev.serverGuid ?? 'N/A'}</td>
                   <td class="guid-cell" title="Device GUID">{dev.deviceGuid ?? 'N/A'}</td>
                   <td class="action">
-                    {#if dev.role !== 'master'}
-                      <button class="btn-link" onclick={() => disconnectDSP(dev.id)}>Disconnect</button>
+                    {#if dev.connected}
+                      {#if dev.role === 'master'}
+                        <button class="btn-link disconnect-master" onclick={() => disconnectDSP(dev.id)}>
+                          Disconnect (Promotes Slave)
+                        </button>
+                      {:else}
+                        <button class="btn-link" onclick={() => disconnectDSP(dev.id)}>Disconnect</button>
+                      {/if}
                     {:else}
-                      <span class="muted">Master</span>
+                      <button class="btn-link reconnect-btn" onclick={() => reconnectDSP(dev.id)}>Reconnect</button>
+                      <button class="btn-link remove-btn-small" onclick={() => removeSavedDevice(dev.id)}>Remove</button>
                     {/if}
                   </td>
                 </tr>
@@ -270,6 +298,18 @@
   .server-ip { font-family: monospace; color: var(--text-dim); font-size: .75rem; word-break: break-all; }
   .guid-cell { font-family: monospace; color: var(--text-dim); font-size: .7rem; letter-spacing: .05em;
                background: rgba(0,0,0,.03); padding: 2px 6px; border-radius: 3px; }
+
+  .disconnected { opacity: 0.7; background: rgba(128,128,128,0.05) !important; }
+  .dot.disconnected { background: var(--dim); box-shadow: none; }
+  .reconnect-btn { background: none; border: none; color: #3b82f6; cursor: pointer; font-size: .8rem; padding: 0; }
+  .reconnect-btn:hover { text-decoration: underline; color: #2563eb; }
+  .remove-btn-small { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: .75rem;
+                      margin-left: .5rem; padding: 0; }
+  .remove-btn-small:hover { color: #ef4444; text-decoration: underline; }
+
+  .disconnect-master { background: none; border: none; color: #f97316; cursor: pointer; font-size: .8rem;
+                       padding: 0; }
+  .disconnect-master:hover { text-decoration: underline; color: #ea580c; }
 
   .btn-link { background: none; border: none; color: #f66; cursor: pointer; font-size: .8rem; padding: 0; }
   .btn-link:hover { text-decoration: underline; }
