@@ -1,10 +1,10 @@
-[ ] web ui: Split the websocket management out of the state/device.svelte.ts and state/device-manager.ts into a new state/websocket-manager.ts
-[ ] web ui: fix the websocket connection ui so the connection status updates in real time
-[ ] server: Update to add a unique GUID for each connected DSP unit
-[ ] web ui: Ensure multiple similar DSP units can be connected by using the server guid and the DSP guid to make a unique reference for each DSP unit
-[ ] web ui: Allow master DSP units to be disconnected. If there are slave units still connected then make the first in the list the new master.
-[ ] web ui: Don't remove DSP units when disconnecting so they can be reconnected whenever required.
-[ ] web ui: Store both server and DSP connection state in the local storage and on page reload reconnect and restore the state.
-[ ] server: in mock mode it sends an initial DSP device state.
-[ ] server: add a real time updated display of the actual local DSP settings (both real and mock modes) using a copy of the tuning page with the routing matrix added
-[ ] server: change the connection log to a full featured send / receive message log with message content debugging and display of both hex data and string data
+[x] web ui: Split the websocket management out of the state/device.svelte.ts and state/device-manager.ts into a new state/websocket-manager.ts
+[x] web ui: fix the websocket connection ui so the connection status updates in real time
+[x] server: Update to add a unique GUID for each connected DSP unit
+[x] web ui: Ensure multiple similar DSP units can be connected by using the server guid and the DSP guid to make a unique reference for each DSP unit
+[x] web ui: Allow master DSP units to be disconnected. If there are slave units still connected then make the first in the list the new master.
+[x] web ui: Don't remove DSP units when disconnecting so they can be reconnected whenever required.
+[x] web ui: Store both server and DSP connection state in the local storage and on page reload reconnect and restore the state.
+[x] server: in mock mode it sends an initial DSP device state.
+[x] server: add a real time updated display of the actual local DSP settings (both real and mock modes) using a copy of the tuning page with the routing matrix added
+[x] server: change the connection log to a full featured send / receive message log with message content debugging and display of both hex data and string data
