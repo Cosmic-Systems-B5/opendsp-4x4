@@ -556,6 +556,7 @@
                     render();
                 } else if (msg.type === 'unsubscribed') {
                     subscriptions.delete(msg.deviceId);
+                    settings.delete(msg.deviceId);
                     if (typeof msg.subscriberCount === 'number') {
                         setSubscriberCount(msg.deviceId, msg.subscriberCount);
                     }
