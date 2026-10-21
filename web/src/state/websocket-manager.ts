@@ -15,6 +15,31 @@ class WebSocketManagerState {
   private nextId = 0;
 
   /**
+   * Get all active server connections (reactive list)
+   */
+  getConnections(): ServerConnection[] {
+    return Array.from(this.connections.values()).map(c => c.server);
+  }
+
+  /**
+   * Check if a server is connected
+   */
+  isConnected(url: string): boolean {
+    return this.connections.has(url);
+  }
+
+  /**
+   * Get connection state for all URLs (for reactive UI)
+   */
+  getConnectionStates(): Record<string, boolean> {
+    const states: Record<string, boolean> = {};
+    for (const url of this.connections.keys()) {
+      states[url] = true;
+    }
+    return states;
+  }
+
+  /**
    * Connect to a WebSocket server
    */
   async connect(url: string, productName: string): Promise<ServerConnection | null> {
@@ -63,20 +88,6 @@ class WebSocketManagerState {
     for (const [url] of this.connections.entries()) {
       this.disconnect(url);
     }
-  }
-
-  /**
-   * Get all active server connections
-   */
-  getConnections(): ServerConnection[] {
-    return Array.from(this.connections.values()).map(c => c.server);
-  }
-
-  /**
-   * Check if a server is connected
-   */
-  isConnected(url: string): boolean {
-    return this.connections.has(url);
   }
 
   /**

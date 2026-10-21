@@ -1,21 +1,23 @@
 <script lang="ts">
   import { device, deviceManager } from "../state/device.svelte.ts";
   import { websocketManager } from "../state/websocket-manager.ts";
-  import { WebSocketTransport } from "../transport/websocket.ts";
 
   let remoteUrls = $state<Array<string>>([]);
   let connectingTo = $state<string | null>(null);
+  let connectionStates = $state<Record<string, boolean>>({});
 
   // Use the reactive webSocketUrls from device state
   $effect(() => {
     remoteUrls = device.webSocketUrls;
+    // Update connection states whenever connections change
+    connectionStates = websocketManager.getConnectionStates();
   });
 
   /**
    * Check if a server has an active WebSocket connection
    */
   function isServerConnected(url: string): boolean {
-    return websocketManager.isConnected(url);
+    return connectionStates[url] ?? false;
   }
 
   async function connectServer(url: string) {
@@ -25,8 +27,10 @@
       const productName = "DSP 4x4 (remote)";
       await websocketManager.connect(url, productName);
 
-      // Now bind to a device (create a device connection on this transport)
-      const t = new WebSocketTransport(url);
+      // Get the transport from websocketManager and bind to device
+      const t = websocketManager.getTransport(url);
+      if (!t) throw new Error("Failed to get WebSocket transport");
+
       await device.bind(t);
 
       // Register the server connection in DeviceManager for tracking

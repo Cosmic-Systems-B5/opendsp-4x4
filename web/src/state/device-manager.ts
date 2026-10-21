@@ -14,6 +14,7 @@ export interface ConnectedDevice {
   transportType: 'usb' | 'websocket';
   connectionInfo: {
     url?: string;
+    path?: string;
     productName: string;
     serialNumber?: string;
   };
