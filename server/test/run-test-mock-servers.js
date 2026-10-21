@@ -1,9 +1,10 @@
-// Test script to run two servers in mock mode with the web UI
+// run-test-mock-servers.js
 // Usage: node run-test-mock-servers.js
 
-import { spawn, exec } from 'child_process';
+import { spawn } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { existsSync } from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -11,241 +12,136 @@ const __dirname = dirname(__filename);
 const PORTS = [8765, 8766];
 const WEB_PORT = 5173;
 
-// Store child processes
 const servers = [];
 let webProcess = null;
 
-function log(msg) {
-  console.log(`[${new Date().toLocaleTimeString()}] ${msg}`);
-}
+const ts = () => new Date().toLocaleTimeString();
+const log = (msg) => console.log(`[${ts()}] ${msg}`);
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-async function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+// ---------------------------------------------------------------------------
+// Start one mock server; resolve only once it prints its ready line.
+// Rejects on exit-before-ready or on spawn error.
+// ---------------------------------------------------------------------------
 
-/**
- * Kill any existing process using the given port
- */
-function killProcessOnPort(port) {
-  return new Promise((resolve) => {
-    // Try lsof first (macOS/Linux)
-    const lsofChild = spawn('lsof', ['-ti:', String(port)]);
-
-    let pidData = '';
-    lsofChild.stdout.on('data', (data) => { pidData += data.toString(); });
-
-    lsofChild.on('close', (code) => {
-      if (code === 0 && pidData.trim()) {
-        // Kill the process
-        const pids = pidData.trim().split('\n').filter(p => p.trim());
-        for (const pid of pids) {
-          try {
-            process.kill(parseInt(pid, 10), 'SIGTERM');
-            log(`Killed existing process ${pid} on port ${port}`);
-          } catch (e) {}
-        }
-        resolve(true);
-      } else {
-        resolve(false);
-      }
-    });
-
-    lsofChild.on('error', () => {
-      // lsof not available, try fuser
-      const fuserChild = spawn('fuser', ['-k', '-TERM', String(port) + '/tcp']);
-      let fuserOutput = '';
-      fuserChild.stdout.on('data', (data) => { fuserOutput += data.toString(); });
-      fuserChild.stderr.on('data', (data) => { fuserOutput += data.toString(); });
-
-      fuserChild.on('close', () => {
-        resolve(fuserOutput.includes(String(port)));
-      });
-
-      fuserChild.on('error', () => {
-        resolve(false);
-      });
-    });
-  });
-}
-
-/**
- * Start a mock server instance on the given port
- */
-async function startMockServer(port) {
-  return new Promise(async (resolve, reject) => {
-    // Check if port is in use and kill existing process
-    try {
-      const { stdout } = await new Promise((res, rej) => {
-        exec(`lsof -ti:${port} 2>/dev/null || echo ""`, (err, stdout) => {
-          res({ stdout, err });
-        });
-      });
-      const pid = stdout.trim();
-
-      if (pid) {
-        log(`Port ${port} is in use by PID ${pid}, killing existing process...`);
-        try {
-          process.kill(parseInt(pid, 10), 'SIGTERM');
-          // Wait a moment for the port to be released
-          await sleep(500);
-        } catch (e) {
-          log(`Failed to kill process ${pid}: ${e.message}`);
-        }
-      }
-    } catch (e) {
-      // lsof not available, continue anyway
-      log(`Could not check port ${port} (${e.message})`);
-    }
-
+function startMockServer(port) {
+  return new Promise((resolve, reject) => {
     const env = { ...process.env, PORT: String(port), MOCK_MODE: 'true' };
-    const args = [join(__dirname, '..', 'index.js')];
+    const args = [join(__dirname, '..', 'bridge.js')];
 
     log(`Starting mock server on port ${port}...`);
-
-    const child = spawn('node', args, {
-      env,
-      stdio: ['pipe', 'pipe', 'inherit'],
-      detached: false
-    });
-
+    const child = spawn('node', args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
     servers.push(child);
 
-    child.stdout.on('data', (data) => {
-      console.log(`[Server ${port}] ${data}`);
+    let settled = false;
+    const settle = (fn, arg) => { if (!settled) { settled = true; fn(arg); } };
+
+    const onData = (buf) => {
+      const s = buf.toString();
+      // Echo every line prefixed with the port
+      for (const line of s.split('\n')) {
+        if (line) console.log(`[Server ${port}] ${line}`);
+      }
+      // Stable readiness marker (see bridge.js patch below)
+      if (s.includes(`READY ${port}`) || s.includes('WebSocket bridge on ws://')) {
+        log(`Mock server ready on port ${port}`);
+        settle(resolve, child);
+      }
+    };
+
+    child.stdout.on('data', onData);
+    child.stderr.on('data', (buf) => {
+      process.stderr.write(`[Server ${port}!] ${buf}`);
     });
 
-    // Wait for server to start
-    child.stdout.on('data', function check(data) {
-      const msg = data.toString();
-      if (msg.includes('WebSocket bridge listening')) {
-        log(`Mock server started on port ${port}`);
-        resolve(child);
-      }
+    child.on('error', (err) => settle(reject, err));
+    child.on('exit', (code) => {
+      if (!settled) settle(reject, new Error(`Server ${port} exited early (code ${code})`));
     });
-
-    child.on('error', (err) => {
-      // Handle EADDRINUSE by killing process and retrying
-      if (err.message && err.message.includes('EADDRINUSE')) {
-        log(`Port ${port} still in use, attempting to kill...`);
-        killProcessOnPort(port).then(() => {
-          sleep(500).then(() => {
-            // Retry starting the server
-            startMockServer(port).then(resolve).catch(reject);
-          });
-        });
-      } else {
-        reject(err);
-      }
-    });
-
-    // Handle early exit
-    setTimeout(() => {
-      if (!servers.some(s => s === child)) {
-        resolve(child);
-      }
-    }, 2000);
   });
 }
 
-/**
- * Start the web app dev server
- */
-function startWebApp() {
-  return new Promise((resolve, reject) => {
-    const webDir = join(__dirname, '..', '..', 'web');
-    log(`Starting web app dev server on port ${WEB_PORT}...`);
+// ---------------------------------------------------------------------------
+// Optional Vite dev server — skipped if ../web doesn't exist
+// ---------------------------------------------------------------------------
 
-    // Use npm from parent directory to run web dev server
-    const child = spawn('npm', ['run', 'dev'], {
+function startWebApp() {
+  const webDir = join(__dirname, '../../', 'web');
+  if (!existsSync(webDir)) {
+    log(`No web/ directory at ${webDir} — skipping Vite dev server`);
+    log(`(bridge.js serves the dashboard itself at each server's /)`);
+    return Promise.resolve(null);
+  }
+
+  return new Promise((resolve, reject) => {
+    log(`Starting web app dev server in ${webDir} on port ${WEB_PORT}...`);
+    const child = spawn('npm', ['run', 'dev', '--', '--host', '--port', String(WEB_PORT)], {
       cwd: webDir,
       env: { ...process.env, PORT: String(WEB_PORT) },
-      stdio: ['pipe', 'pipe', 'inherit'],
-      detached: false
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
-
     webProcess = child;
 
-    child.stdout.on('data', (data) => {
-      console.log(`[Web App] ${data}`);
-    });
+    let settled = false;
+    const settle = (fn, arg) => { if (!settled) { settled = true; fn(arg); } };
 
-    // Wait for Vite to be ready
-    child.stdout.on('data', function check(data) {
-      const msg = data.toString();
-      if (msg.includes('Local:') || msg.includes('ready in')) {
+    const onData = (buf) => {
+      const s = buf.toString();
+      for (const line of s.split('\n')) if (line) console.log(`[Web App] ${line}`);
+      if (s.includes('Local:') || s.includes('ready in')) {
         log('Web app dev server is ready');
-        resolve(child);
+        settle(resolve, child);
       }
-    });
+    };
 
-    child.on('error', reject);
+    child.stdout.on('data', onData);
+    child.stderr.on('data', (buf) => process.stderr.write(`[Web App!] ${buf}`));
+    child.on('error', (err) => settle(reject, err));
+    child.on('exit', (code) => {
+      if (!settled) settle(reject, new Error(`Web app exited early (code ${code})`));
+    });
   });
 }
 
-/**
- * Stop all running processes
- */
+// ---------------------------------------------------------------------------
+// Cleanup
+// ---------------------------------------------------------------------------
+
 function cleanup() {
   log('\nStopping servers...');
-
-  // Kill web process first
-  if (webProcess) {
-    try { webProcess.kill('SIGTERM'); } catch (e) {}
-  }
-
-  // Kill server processes
-  for (const server of servers) {
-    try { server.kill('SIGTERM'); } catch (e) {}
-  }
-
+  if (webProcess) { try { webProcess.kill('SIGTERM'); } catch {} }
+  for (const s of servers) { try { s.kill('SIGTERM'); } catch {} }
   log('All servers stopped.');
   process.exit(0);
 }
+process.on('SIGINT', cleanup);
+process.on('SIGTERM', cleanup);
 
-/**
- * Main entry point
- */
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
 async function main() {
   console.log('\n=== openDSP-4x4 Mock Server Test Suite ===\n');
 
-  // Set up signal handlers for graceful shutdown
-  process.on('SIGINT', cleanup);
-  process.on('SIGTERM', cleanup);
+  // Sequential spawn is fine now — each promise resolves on its own readiness.
+  await startMockServer(PORTS[0]);
+  await startMockServer(PORTS[1]);
 
-  try {
-    // Start two mock servers
-    const server1 = await startMockServer(PORTS[0]);
-    const server2 = await startMockServer(PORTS[1]);
+  // Optional web UI
+  await startWebApp();
 
-    log(`\n=== Mock Servers Running ===`);
-    log(`Server 1: ws://localhost:${PORTS[0]} (mock mode)`);
-    log(`Server 2: ws://localhost:${PORTS[1]} (mock mode)`);
-
-    // Give servers time to fully initialize
-    await sleep(1000);
-
-    // Start web app
-    const web = await startWebApp();
-
-    log(`\n=== Web App Running ===`);
-    log(`Open http://localhost:${WEB_PORT} in your browser`);
-
-    log(`\n=== Test Instructions ===`);
-    log(`1. Connect to Server 1: ws://localhost:${PORTS[0]}`);
-    log(`2. Connect to Server 2: ws://localhost:${PORTS[1]}`);
-    log(`3. Both servers are in mock mode - no USB device required`);
-    log(`4. Check /logs/connections endpoint for connection logs`);
-
-    log('\nPress Ctrl+C to stop all servers\n');
-
-    // Keep the process running
-    await new Promise(() => {});
-
-  } catch (error) {
-    console.error('Error starting servers:', error);
-    cleanup();
-    process.exit(1);
+  log('\n=== Running ===');
+  for (const p of PORTS) {
+    log(`Server ${p}:  dashboard http://localhost:${p}/   ws ws://localhost:${p}/`);
   }
+  if (webProcess) log(`Web app:    http://localhost:${WEB_PORT}`);
+  log('Press Ctrl+C to stop.\n');
+
+  await new Promise(() => {}); // keep alive
 }
 
-main();
+main().catch((err) => {
+  console.error('Fatal:', err);
+  cleanup();
+});

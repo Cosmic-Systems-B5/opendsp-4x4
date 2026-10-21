@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>openDSP-4x4 Bridge</title>
+    <style>
+        :root { --bg:#1a1a2e; --panel:#2d2d44; --line:#3a3a52; --text:#e6e6ee; --dim:#8b8b9e;
+            --good:#10b981; --accent:#3b82f6; --warn:#fbbf24; --err:#f87171; }
+        * { box-sizing: border-box; }
+        html, body { margin: 0; }
+        body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg);
+            color: var(--text); font-size: 13px; line-height: 1.35;
+            max-width: 1400px; margin: 0 auto; padding: .75rem; }
+        h1 { font-size: 1.05rem; margin: 0; }
+        h2 { font-size: .9rem; margin: 1rem 0 .5rem; color: var(--dim);
+            text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+
+        .server-id { background: var(--accent); padding: .1rem .4rem; border-radius: 4px;
+            font-family: ui-monospace, monospace; font-size: .75rem; color: white; }
+        .status-ok { color: var(--good); } .status-warn { color: var(--warn); } .status-err { color: var(--err); }
+        .hint { color: var(--dim); font-style: italic; font-size: .78rem; }
+        code { background: #1f2937; padding: .05rem .3rem; border-radius: 3px;
+            font-family: ui-monospace, monospace; font-size: .8em; }
+
+        .bar { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
+            padding: .5rem .75rem; background: var(--panel); border-radius: 8px;
+            margin-bottom: .5rem; }
+
+        button { padding: .3rem .7rem; font-size: .78rem; border: none; border-radius: 5px;
+            font-weight: 600; cursor: pointer; color: #0a0d12; background: #e5e7eb; }
+        button.secondary { background: #4b5563; color: white; }
+        button.good { background: var(--good); color: #062016; }
+        button.bad  { background: var(--err); color: #2a0606; }
+        button:disabled { opacity: .5; cursor: default; }
+
+        .pill { display: inline-block; padding: 0 .4rem; border-radius: 999px;
+            font-size: .65rem; line-height: 1.5; font-weight: 600;
+            background: #374151; color: white; font-family: ui-monospace, monospace;
+            text-transform: uppercase; letter-spacing: .03em; }
+        .pill.hid  { background: #2563eb; }
+        .pill.mock { background: #7c3aed; }
+        .pill.sub  { background: var(--good); color: #062016; }
+
+        .device-grid { display: grid; gap: .5rem;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+        .device-card { background: var(--panel); border: 1px solid var(--line);
+            border-radius: 8px; overflow: hidden; display: flex; flex-direction: column;
+            font-size: .78rem; }
+        .device-card.subscribed { border-color: var(--accent); }
+        .device-card > header { padding: .4rem .6rem; background: #23233a;
+            display: flex; justify-content: space-between;
+            align-items: center; gap: .4rem; font-weight: 600; }
+        .device-card > header .name { overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; }
+        .device-card .meta { display: grid; grid-template-columns: 1fr; gap: .1rem;
+            padding: .35rem .6rem; color: var(--dim); font-size: .72rem; }
+        .device-card .meta div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .device-card .meta b { color: var(--text); font-weight: 500;
+            font-family: ui-monospace, monospace; }
+        .device-card .body { padding: .4rem .6rem .5rem; border-top: 1px solid var(--line); }
+        .device-card .buttons { padding: .4rem .6rem; display: flex; gap: .35rem;
+            flex-wrap: wrap; border-top: 1px solid var(--line); }
+
+        .matrix { display: grid; grid-template-columns: 26px repeat(4, 1fr); gap: 2px;
+            font-family: ui-monospace, monospace; font-size: .62rem; }
+        .matrix .cell { background: var(--bg); padding: 2px 0; text-align: center;
+            border-radius: 2px; min-height: 16px; }
+        .matrix .hdr { background: var(--accent); color: white; font-weight: 700; }
+        .matrix .lbl { background: #4b5563; color: white; text-align: right;
+            padding-right: 4px; font-weight: 700; }
+        .matrix .on  { background: var(--good); color: white; font-weight: 700; }
+
+        .chans { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px;
+            font-family: ui-monospace, monospace; font-size: .62rem; margin-top: .35rem; }
+        .chans .ch { background: var(--bg); border-radius: 2px; padding: 1px 3px;
+            display: flex; justify-content: space-between; }
+        .chans .ch.mute { background: #3a1f1f; color: #fca5a5; }
+        .chans .ch .v { color: var(--good); }
+        .chans .ch.mute .v { color: #fca5a5; }
+
+        .empty { color: var(--dim); font-style: italic; padding: .25rem 0; }
+
+        #logs-scroll { max-height: 220px; overflow: auto; }
+        .log-entry { padding: .25rem .5rem; margin-bottom: 2px; background: #23233a;
+            border-radius: 4px; font-size: .72rem; font-family: ui-monospace, monospace;
+            display: flex; gap: .5rem; }
+        .log-entry .ts { color: var(--dim); }
+        .log-entry .m { color: #60a5fa; min-width: 3.5em; }
+        .log-entry .p { color: var(--text); overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; }
+    </style>
+</head>
+<body>
+
+<div class="bar">
+    <h1>openDSP-4x4</h1>
+    <span class="server-id" id="server-id">…</span>
+    <span>Status: <span id="status">…</span></span>
+    <span style="flex:1"></span>
+    <span class="hint">ws: <code id="ws-url">ws://…</code></span>
+</div>
+
+<div class="bar">
+  <span>Devices: <b id="dev-count">0</b>
+     (<span id="hid-count">0</span> HID, <span id="mock-count">0</span> mock)</span>
+    <span>Mock: <b id="mock-state">…</b></span>
+    <span style="flex:1"></span>
+    <button id="add-mock" class="good">+ Add mock</button>
+    <button id="remove-all-mock" class="bad">− Remove all mock</button>
+    <button id="toggle-mock">Toggle mock</button>
+    <button id="sub-all" class="secondary">Sub all</button>
+    <button id="unsub-all" class="secondary">Unsub all</button>
+</div>
+
+<div class="device-grid" id="device-grid">
+    <div class="empty">No devices yet…</div>
+</div>
+
+<h2 style="display:flex;align-items:center;gap:.5rem;">
+    Logs
+    <button id="clear-logs" class="secondary" style="font-size:.7rem;padding:.1rem .4rem;margin-left:auto;">clear</button>
+</h2>
+<div id="logs-scroll"><div id="logs"><div class="empty">—</div></div></div>
+
+<script>
+    (() => {
+        const $ = (id) => document.getElementById(id);
+        const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
+            ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+        let ws = null;
+        const devices = new Map();
+        const subscriptions = new Set();
+        const settings = new Map();
+
+        async function loadServerInfo() {
+            try {
+                const info = await (await fetch('/server-info')).json();
+                $('server-id').textContent = info.serverId;
+                $('ws-url').textContent = `ws://${info.host}:${info.port}`;
+                $('mock-state').textContent = info.mockMode ? 'ON' : 'OFF';
+            } catch (e) { console.error(e); }
+        }
+
+        async function loadStatus() {
+            try {
+                const s = await (await fetch('/status')).json();
+                $('dev-count').textContent = s.deviceCount;
+                $('hid-count').textContent = s.hidCount;
+                $('mock-count').textContent = s.mockCount;
+                const el = $('status');
+                if (s.deviceCount === 0) el.innerHTML = '<span class="status-err">no devices</span>';
+                else if (s.mockMode && s.hidCount === 0) el.innerHTML = '<span class="status-warn">mock only</span>';
+                else el.innerHTML = `<span class="status-ok">${s.deviceCount} device(s)</span>`;
+            } catch (e) { console.error(e); }
+        }
+
+        async function loadLogs() {
+            try {
+                const logs = await (await fetch('/logs/connections')).json();
+                const el = $('logs');
+                if (!logs.length) { el.innerHTML = '<div class="empty">—</div>'; return; }
+                el.innerHTML = logs.slice(0, 200).map(l =>
+                    `<div class="log-entry">
+           <span class="ts">${esc(l.timestamp)}</span>
+           <span class="m">${esc(l.method || l.type)}</span>
+           <span class="p">${esc(l.path || '')}</span>
+         </div>`).join('');
+            } catch (e) { console.error(e); }
+        }
+
+        function connect() {
+            const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+            ws = new WebSocket(`${proto}://${location.host}/`);
+
+            ws.onopen = () => {
+                ws.send(JSON.stringify({ type: 'action', action: 'list_devices' }));
+                for (const id of subscriptions) {
+                    ws.send(JSON.stringify({ type: 'action', action: 'subscribe', deviceId: id }));
+                }
+            };
+
+            ws.onmessage = (e) => {
+                let msg; try { msg = JSON.parse(e.data); } catch { return; }
+                if (msg.type === 'devices') {
+                    devices.clear();
+                    for (const d of msg.devices) devices.set(d.id, d);
+                    render();
+                } else if (msg.type === 'subscribed') {
+                    subscriptions.add(msg.deviceId);
+                    render();
+                } else if (msg.type === 'device_gone') {
+                    subscriptions.delete(msg.deviceId);
+                    settings.delete(msg.deviceId);
+                    devices.delete(msg.deviceId);
+                    render();
+                } else if (msg.type === 'settings_update') {
+                    settings.set(msg.deviceId, { channels: msg.channels, routing: msg.routing });
+                    render();
+                }
+            };
+
+            ws.onclose = () => setTimeout(connect, 1500);
+            ws.onerror = (e) => console.error('WS error:', e);
+        }
+
+        function render() {
+            const grid = $('device-grid');
+            if (devices.size === 0) {
+                grid.innerHTML = '<div class="empty">No devices yet…</div>';
+                return;
+            }
+            grid.innerHTML = [...devices.keys()].map(buildCard).join('');
+        }
+
+        function buildCard(id) {
+            const d = devices.get(id) || {};
+            const subscribed = subscriptions.has(id);
+            const st = settings.get(id);
+            const isMock = d.kind === 'mock';
+
+            const kindPill = `<span class="pill ${esc(d.kind)}">${esc(d.kind)}</span>`;
+            const subPill = subscribed ? '<span class="pill sub">sub</span>' : '';
+
+            let routing = '<div class="empty" style="font-size:.7rem">routing —</div>';
+            if (st?.routing?.length) {
+                let rows = '<div class="cell"></div>';
+                for (let i = 0; i < 4; i++) rows += `<div class="cell hdr">In${i + 1}</div>`;
+                for (let out = 0; out < st.routing.length; out++) {
+                    rows += `<div class="cell lbl">O${out + 1}</div>`;
+                    for (let bit = 0; bit < 4; bit++) {
+                        const on = (st.routing[out] & (1 << bit)) !== 0;
+                        rows += `<div class="cell ${on ? 'on' : ''}">${on ? 'X' : ''}</div>`;
+                    }
+                }
+                routing = `<div class="matrix">${rows}</div>`;
+            }
+
+            let chans = '';
+            if (st?.channels?.length) {
+                chans = '<div class="chans">' + st.channels.slice(0, 8).map((ch, i) =>
+                    `<div class="ch ${ch.mute ? 'mute' : ''}">
+           <span>${i + 1}</span>
+           <span class="v">${ch.gainDb?.toFixed(0) ?? '-'}dB</span>
+         </div>`).join('') + '</div>';
+            }
+
+            return `
+      <div class="device-card ${subscribed ? 'subscribed' : ''}" data-device-id="${esc(id)}">
+        <header>
+          <span class="name" title="${esc(d.product)}">${esc(d.product || id)}</span>
+          <span>${kindPill} ${subPill}</span>
+        </header>
+        <div class="meta">
+          <div>id <b>${esc(d.publishedId || '—')}</b></div>
+          <div>slot <b>${esc(id)}</b></div>
+          <div>subs <b>${d.subscriberCount ?? 0}</b></div>
+        </div>
+        <div class="body">
+          ${routing}
+          ${chans}
+        </div>
+      </div>`;
+        }
+
+        $('device-grid').addEventListener('click', (e) => {
+            const btn = e.target.closest('button'); if (!btn) return;
+            const { action, id } = btn.dataset;
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+            if (action === 'sub')   return ws.send(JSON.stringify({ type: 'action', action: 'subscribe',   deviceId: id }));
+            if (action === 'unsub') return ws.send(JSON.stringify({ type: 'action', action: 'unsubscribe', deviceId: id }));
+            if (action === 'status') {
+                const frame = [0x10, 0x02, 0x01, 0x00, 0x01, 0x10, 0x10, 0x03, 0x6e];
+                while (frame.length < 64) frame.push(0);
+                const data = btoa(String.fromCharCode(...frame));
+                return ws.send(JSON.stringify({ type: 'request', deviceId: id, data }));
+            }
+            if (action === 'remove') {
+                fetch('/mock', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ remove: id }),
+                }).then(loadStatus);
+                return;
+            }
+        });
+
+        $('sub-all').onclick = () => ws?.readyState === WebSocket.OPEN &&
+            ws.send(JSON.stringify({ type: 'action', action: 'subscribe_all' }));
+        $('unsub-all').onclick = () => ws?.readyState === WebSocket.OPEN &&
+            ws.send(JSON.stringify({ type: 'action', action: 'unsubscribe_all' }));
+
+        $('add-mock').onclick = async () => {
+            const res = await fetch('/mock', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ add: true }),
+            });
+            if (res.ok) {
+                const data = await res.json();
+                console.log('Added', data.publishedId);
+                loadStatus();
+            }
+        };
+
+        $('remove-all-mock').onclick = async () => {
+            const res = await fetch('/mock', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ remove: true }),
+            });
+            if (res.ok) {
+                const { removedCount } = await res.json();
+                console.log(`Removed ${removedCount} mock device(s)`);
+                loadStatus();
+            }
+        };
+
+        $('toggle-mock').onclick = async () => {
+            const on = $('mock-state').textContent === 'ON';
+            const res = await fetch('/mock', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enable: !on }),
+            });
+            if (res.ok) {
+                $('mock-state').textContent = on ? 'OFF' : 'ON';
+                loadStatus();
+            }
+        };
+
+        $('clear-logs').onclick = () => { $('logs').innerHTML = '<div class="empty">—</div>'; };
+
+        const devEs = new EventSource('/devices/changes');
+        devEs.onmessage = (e) => {
+            try {
+                const data = JSON.parse(e.data);
+                if (data.type !== 'devices_update') return;
+                const liveIds = new Set(data.devices.map(d => d.id));
+                for (const d of data.devices) {
+                    devices.set(d.id, { ...(devices.get(d.id) || {}), ...d });
+                }
+                for (const id of devices.keys()) if (!liveIds.has(id)) devices.delete(id);
+                render();
+            } catch (err) { console.error(err); }
+        };
+
+        loadServerInfo();
+        loadStatus();
+        loadLogs();
+        connect();
+        setInterval(loadStatus, 5000);
+        setInterval(loadLogs, 5000);
+    })();
+</script>
+</body>
+</html>

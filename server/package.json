@@ -5,11 +5,10 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js",
-    "mock": "MOCK_MODE=true node index.js"
+    "start": "node bridge.js",
+    "mock": "MOCK_MODE=true node bridge.js"
   },
   "dependencies": {
-    "dns-sd-browser": "^1.1.0",
     "node-hid": "^3.4.0",
     "ws": "^8.22.0"
   }
