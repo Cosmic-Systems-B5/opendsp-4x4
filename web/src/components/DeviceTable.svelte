@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { deviceManager } from "../state/device-manager.ts";
+  import { deviceManagerSvelte } from "../state/device.manager.svelte.ts";
 </script>
 
 <div class="device-table-container">
@@ -15,12 +15,12 @@
       </tr>
     </thead>
     <tbody>
-      {#if deviceManager.devices.length === 0}
+      {#if deviceManagerSvelte.devices.length === 0}
         <tr class="empty-row">
           <td colspan="6">No DSPs connected. Use System > Connection to add devices.</td>
         </tr>
       {:else}
-        {#each deviceManager.devices as dev (dev.id)}
+        {#each deviceManagerSvelte.devices as dev (dev.id)}
           <tr class:master={dev.role === 'master'} class:slave={dev.role === 'slave'}>
             <td class="status-cell">
               <span class="dot ok"></span>
@@ -36,7 +36,7 @@
             <td class="id">{dev.id.slice(0, 12)}...</td>
             <td class="action">
               {#if dev.role !== 'master'}
-                <button class="btn-link" onclick={() => deviceManager.disconnect(dev.id)}>Disconnect</button>
+                <button class="btn-link" onclick={() => deviceManagerSvelte.disconnect(dev.id)}>Disconnect</button>
               {:else}
                 <span class="muted">Master</span>
               {/if}
@@ -48,9 +48,9 @@
   </table>
 
   <div class="summary">
-    <span>Total: {deviceManager.devices.length}</span>
-    <span>Master: {#if deviceManager.master}<strong>{deviceManager.master.productName}</strong>{:else}-{/if}</span>
-    <span>Slaves: {deviceManager.slaveCount}</span>
+    <span>Total: {deviceManagerSvelte.devices.length}</span>
+    <span>Master: {#if deviceManagerSvelte.master}<strong>{deviceManagerSvelte.master.productName}</strong>{:else}-{/if}</span>
+    <span>Slaves: {deviceManagerSvelte.slaveCount}</span>
   </div>
 </div>
 

@@ -2,7 +2,7 @@
   // Patch-cable overlay: one bezier per routing connection, In-node right edge → Out-node
   // left edge, coloured by input. Measures the [data-wire] node rects relative to the
   // .board container; redraws on routing/selection/layout change. No positioning side-effects.
-  import { device } from "../state/device.ts";
+  import { device } from "../state/device.svelte.ts";
 
   let svg: SVGSVGElement;
   let tick = $state(0);

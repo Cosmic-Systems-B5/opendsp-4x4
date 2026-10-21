@@ -276,7 +276,7 @@ function addMessageLog(entry) {
 }
 
 // ---------------------------------------------------------------------------
-// Device registry
+// DeviceSvelte registry
 // ---------------------------------------------------------------------------
 
 const devices = new Map(); // id -> DeviceRecord
@@ -386,7 +386,7 @@ function handleMockWrite(device, bytes) {
 }
 
 // ---------------------------------------------------------------------------
-// Device lifecycle
+// DeviceSvelte lifecycle
 // ---------------------------------------------------------------------------
 
 function openHidDevice(hidPath) {

@@ -10,7 +10,7 @@
 //     - 'settings_update': device settings change notification
 //     - 'devices': list of available devices (serverId + devices array)
 //
-// Device identifiers:
+// DeviceSvelte identifiers:
 //   - deviceGuid: "DSP" + 5-char alphanumeric (stable per physical device)
 //   - publishedId: "SERVER_ID-DSP_GUID" (e.g., "Q7X2K-DSP7C4H9")
 
@@ -21,13 +21,13 @@ export interface DeviceReport {
   deviceId: string;
   deviceGuid: string;
   publishedId: string;
-  data: string; // base64-encoded binary
+  data: string;
 }
 
 export interface RequestMessage {
   type: 'request';
   deviceId?: string;
-  data: string; // base64-encoded frame
+  data: string;
 }
 
 export interface SubscribedMessage {
@@ -37,6 +37,16 @@ export interface SubscribedMessage {
   publishedId: string;
   product: string;
   kind: 'hid' | 'mock';
+  subscriberCount?: number;
+  alreadySubscribed?: boolean;
+}
+
+export interface UnsubscribedMessage {
+  type: 'unsubscribed';
+  deviceId: string;
+  deviceGuid: string | null;
+  publishedId: string | null;
+  subscriberCount: number | null;
 }
 
 export interface SettingsUpdateMessage {
@@ -76,17 +86,62 @@ export interface DevicesMessage {
   }>;
 }
 
+export interface DeviceGoneMessage {
+  type: 'device_gone';
+  deviceId: string;
+  deviceGuid: string;
+  publishedId: string;
+}
+
+export interface ErrorMessage {
+  type: 'error';
+  code: string;
+  message?: string;
+  deviceId?: string;
+}
+
+export type BridgeMessage =
+    | DeviceReport
+    | SubscribedMessage
+    | UnsubscribedMessage
+    | SettingsUpdateMessage
+    | DevicesMessage
+    | DeviceGoneMessage
+    | ErrorMessage;
+
+/**
+ * WebSocketTransport
+ *
+ * - One socket per server.
+ * - Reports for a *specific* device are filtered to that device's bound
+ *   listeners via `onReport` / `request`. Reports from other devices on the
+ *   same socket are still delivered to generic `message` listeners, so a
+ *   DeviceSvelte that filters by deviceId itself also works.
+ * - `send(text)` for fire-and-forget JSON (subscribe / unsubscribe / requests).
+ */
 export class WebSocketTransport implements DspTransport {
+  /** Raw-byte listeners, already filtered to the bound device. */
   private listeners = new Set<(r: Uint8Array) => void>();
+  /** Typed-message listeners, unfiltered (consumer filters on deviceId). */
+  private msgListeners = new Set<(m: BridgeMessage) => void>();
   private pending: ((r: Uint8Array | null) => void) | null = null;
+  private pendingFor: string | null = null; // deviceId we're waiting on
   private chain: Promise<unknown> = Promise.resolve();
   private closed = false;
 
-  // Device info from subscription
+  // DeviceSvelte info from subscription
   public deviceGuid?: string;
   public publishedId?: string;
   public productName = "DSP 4x4 (remote)";
   public kind: 'hid' | 'mock' = 'hid';
+
+  /**
+   * When non-null, only reports / settings_update / subscribed / device_gone
+   * for this deviceId reach the raw listener set. When null (before any
+   * `subscribe()`), the socket acts as a "server-level" transport that does
+   * not filter — used by server-manager to listen for `devices` broadcasts.
+   */
+  public boundDeviceId: string | null = null;
 
   static supported(): boolean {
     return typeof WebSocket !== "undefined";
@@ -105,30 +160,13 @@ export class WebSocketTransport implements DspTransport {
       const ws = new WebSocket(this.url);
       this.ws = ws;
 
-      // Define message handler first so we can reference it
       this.messageHandler = (e: MessageEvent) => {
         try {
           if (typeof e.data === "string") {
-            const msg = JSON.parse(e.data);
-
-            // Handle different message types from bridge.js
-            switch (msg.type) {
-              case 'report':
-                this.handleReportMessage(msg);
-                break;
-              case 'subscribed':
-                this.handleSubscribedMessage(msg);
-                break;
-              case 'settings_update':
-                this.handleSettingsUpdate(msg);
-                break;
-              case 'devices':
-                console.log('Device list update:', msg.devices);
-                break;
-            }
+            const msg = JSON.parse(e.data) as BridgeMessage;
+            this.dispatch(msg);
           } else if (e.data instanceof ArrayBuffer) {
-            // Handle raw binary data (legacy fallback)
-            this.handleReport(new Uint8Array(e.data));
+            this.handleReport(new Uint8Array(e.data), undefined);
           }
         } catch (err) {
           console.warn(`WebSocket: Failed to parse message`, err);
@@ -143,28 +181,19 @@ export class WebSocketTransport implements DspTransport {
         ws.removeEventListener("close", onClose);
       };
 
-      const onOpen = () => {
-        cleanup();
-        resolve();
-      };
-
-      const onError = (e: Event) => {
-        cleanup();
-        reject(new Error("WebSocket connection failed"));
-      };
-
-      const onClose = (e: CloseEvent) => {
+      const onOpen = () => { cleanup(); resolve(); };
+      const onError = (_e: Event) => { cleanup(); reject(new Error("WebSocket connection failed")); };
+      const onClose = (_e: CloseEvent) => {
         cleanup();
         this.closed = true;
-        // Reject any pending requests
         if (this.pending) {
           const resolve = this.pending;
           this.pending = null;
+          this.pendingFor = null;
           resolve(null);
         }
-        // Notify listeners of closure
         for (const cb of this.listeners) {
-          try { cb(new Uint8Array(0)); } catch {}
+          try { cb(new Uint8Array(0)); } catch { /* ignore */ }
         }
       };
 
@@ -180,89 +209,185 @@ export class WebSocketTransport implements DspTransport {
     const ws = this.ws;
     if (ws && this.messageHandler) {
       ws.removeEventListener("message", this.messageHandler);
-      ws.close();
+      try { ws.close(); } catch { /* ignore */ }
       this.ws = null;
       this.messageHandler = undefined;
     }
   }
 
-  /**
-   * Parse a report message and extract the binary data
-   */
+  // --- message dispatch ---------------------------------------------------
+
+  private dispatch(msg: BridgeMessage): void {
+    // Always fan out to typed listeners (consumers filter on deviceId).
+    for (const cb of this.msgListeners) {
+      try { cb(msg); } catch { /* ignore */ }
+    }
+
+    switch (msg.type) {
+      case 'report': {
+        // Filter to *this transport's* bound device (if any).
+        if (this.boundDeviceId && msg.deviceId !== this.boundDeviceId) return;
+        this.handleReportMessage(msg);
+        return;
+      }
+      case 'subscribed':
+        if (!this.boundDeviceId || msg.deviceId === this.boundDeviceId) {
+          this.handleSubscribedMessage(msg);
+        }
+        return;
+      case 'settings_update':
+        // Informational for the transport; consumers do the parsing.
+        return;
+      case 'devices':
+        // Server-level; typed listeners handle it.
+        return;
+      case 'unsubscribed':
+      case 'device_gone':
+        // Informational for the transport; consumers handle it.
+        return;
+      case 'error':
+        console.warn(`[bridge] ${msg.code}${msg.message ? `: ${msg.message}` : ''}`);
+        return;
+    }
+  }
+
   private handleReportMessage(msg: DeviceReport): void {
     try {
-      if (typeof msg.data === 'string') {
-        // Base64-encoded binary data - decode properly using atob
-        const decoded = atob(msg.data);
-        const bytes = new Uint8Array(decoded.length).map((_, i) => decoded.charCodeAt(i));
-        this.handleReport(bytes);
-      }
+      const decoded = atob(msg.data);
+      const bytes = new Uint8Array(decoded.length);
+      for (let i = 0; i < decoded.length; i++) bytes[i] = decoded.charCodeAt(i);
+      this.handleReport(bytes, msg.deviceId);
     } catch (err) {
       console.warn(`WebSocket: Failed to decode report data`, err);
     }
   }
 
-  /**
-   * Handle subscription confirmation message
-   */
   private handleSubscribedMessage(msg: SubscribedMessage): void {
+    // If this transport is already bound to a device, don't let a *different*
+    // device's subscribe ack overwrite our identity.
+    if (this.boundDeviceId && msg.deviceId !== this.boundDeviceId) return;
     this.deviceGuid = msg.deviceGuid;
     this.publishedId = msg.publishedId;
     this.productName = msg.product;
     this.kind = msg.kind;
+    if (!this.boundDeviceId) this.boundDeviceId = msg.deviceId;
     console.log(`Subscribed to device: ${msg.publishedId} (${msg.kind})`);
   }
 
-  /**
-   * Handle settings update message
-   */
-  private handleSettingsUpdate(msg: SettingsUpdateMessage): void {
-    // This is informational - the transport doesn't act on it directly
-    // but we could notify listeners if needed
-    console.debug('Settings update received', msg);
-  }
-
-  private handleReport(report: Uint8Array): void {
-    if (this.pending && !this.closed) {
-      const resolve = this.pending;
-      this.pending = null;
-      resolve(report);
+  private handleReport(report: Uint8Array, deviceId: string | undefined): void {
+    // Only resolve a pending request if it belongs to the device we asked for.
+    if (this.pending) {
+      if (this.pendingFor === null || deviceId === this.pendingFor) {
+        const resolve = this.pending;
+        this.pending = null;
+        this.pendingFor = null;
+        resolve(report);
+      }
     }
     for (const cb of this.listeners) {
-      try { cb(report); } catch {}
+      try { cb(report); } catch { /* ignore */ }
     }
   }
 
-  onReport(cb: (r: Uint8Array) => void): () => void {
-    this.listeners.add(cb);
-    return () => this.listeners.delete(cb);
+  // --- public API --------------------------------------------------------
+
+  /**
+   * Send a raw JSON text frame. Used for fire-and-forget actions
+   * (subscribe, unsubscribe, and per-device requests).
+   */
+  send(text: string): void {
+    if (!this.ws) throw new Error("WebSocketTransport: not opened");
+    if (this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error("WebSocketTransport: socket not open");
+    }
+    this.ws.send(text);
   }
 
-  async request(frame: Uint8Array, timeoutMs = 1200): Promise<Uint8Array> {
-    if (!this.ws || this.closed) throw new Error("transport not open");
+  /** Convenience: send a typed message object as JSON. */
+  sendMessage(msg: object): void {
+    this.send(JSON.stringify(msg));
+  }
 
-    const run = this.chain.then(() => this.sendOne(frame, timeoutMs));
+  onClose(cb: () => void): void {
+    if (!this.ws) throw new Error("WebSocketTransport: not opened");
+    this.ws.addEventListener("close", cb);
+  }
+
+  addEventListener(type: 'open' | 'close' | 'message', cb: (ev: any) => void): void {
+    if (!this.ws) throw new Error("WebSocketTransport: not opened");
+    this.ws.addEventListener(type, cb as EventListener);
+  }
+
+  removeEventListener(type: 'open' | 'close' | 'message', cb: (ev: any) => void): void {
+    if (!this.ws) return;
+    this.ws.removeEventListener(type, cb as EventListener);
+  }
+
+  onCloseListener(cb: () => void): () => void {
+    if (!this.ws) return () => {};
+    this.ws.addEventListener('close', cb);
+    return () => { try { this.ws?.removeEventListener('close', cb); } catch { /* ignore */ } };
+  }
+
+  /**
+   * Register a listener for typed bridge messages (unfiltered). Consumers
+   * filter on `msg.deviceId` themselves. Returns an unsubscribe function.
+   */
+  onMessage(cb: (msg: BridgeMessage) => void): () => void {
+    this.msgListeners.add(cb);
+    return () => { this.msgListeners.delete(cb); };
+  }
+
+  /**
+   * Register a listener for *this device's* reports only. Returns an
+   * unsubscribe function.
+   */
+  onReport(cb: (r: Uint8Array) => void): () => void {
+    this.listeners.add(cb);
+    return () => { this.listeners.delete(cb); };
+  }
+
+  /**
+   * Send a request frame and wait for the next report *from the same device*.
+   * Serialized through `chain` so overlapping callers can't interleave
+   * replies.
+   */
+  async request(frame: Uint8Array, timeoutMs = 1200, deviceId?: string): Promise<Uint8Array> {
+    if (!this.ws || this.closed) throw new Error("transport not open");
+    const run = this.chain.then(() => this.sendOne(frame, timeoutMs, deviceId ?? this.boundDeviceId ?? undefined));
     this.chain = run.then(() => undefined, () => undefined);
     return run;
   }
 
-  private async sendOne(frame: Uint8Array, timeoutMs: number): Promise<Uint8Array> {
+  private async sendOne(frame: Uint8Array, timeoutMs: number, deviceId: string | undefined): Promise<Uint8Array> {
     if (!this.ws || this.closed) throw new Error("transport not open");
 
-    // Retry pattern similar to WebHID
     const perMs = 400;
     for (let i = 0; i * perMs < timeoutMs; i++) {
       const reply = new Promise<Uint8Array | null>((resolve) => {
         this.pending = resolve;
-        setTimeout(() => { if (this.pending === resolve) { this.pending = null; resolve(null); } }, perMs);
+        this.pendingFor = deviceId ?? null;
+        setTimeout(() => {
+          if (this.pending === resolve) {
+            this.pending = null;
+            this.pendingFor = null;
+            resolve(null);
+          }
+        }, perMs);
 
-        // Send frame as base64-encoded JSON message
-        const data = btoa(String.fromCharCode(...frame));
+        let binary = '';
+        for (let b = 0; b < frame.length; b++) binary += String.fromCharCode(frame[b]!);
+        const data = btoa(binary);
         try {
           const msg: RequestMessage = { type: 'request', data };
-          this.ws!.send(JSON.stringify(msg));
-        } catch (e) {
-          if (this.pending === resolve) { this.pending = null; resolve(null); }
+          if (deviceId) msg.deviceId = deviceId;
+          this.send(JSON.stringify(msg));
+        } catch {
+          if (this.pending === resolve) {
+            this.pending = null;
+            this.pendingFor = null;
+            resolve(null);
+          }
         }
       });
 

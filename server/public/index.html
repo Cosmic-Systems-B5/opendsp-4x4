@@ -355,12 +355,12 @@
 </h2>
 <div id="msgs-scroll"><div id="msgs"><div class="empty">—</div></div></div>
 
-<h2 style="display:flex;align-items:center;gap:.5rem;">
-    Connection logs
-    <button id="clear-logs" class="secondary"
-            style="font-size:.7rem;padding:.1rem .4rem;margin-left:auto;">clear</button>
-</h2>
-<div id="logs-scroll"><div id="logs"><div class="empty">—</div></div></div>
+<!--<h2 style="display:flex;align-items:center;gap:.5rem;">-->
+<!--    Connection logs-->
+<!--    <button id="clear-logs" class="secondary"-->
+<!--            style="font-size:.7rem;padding:.1rem .4rem;margin-left:auto;">clear</button>-->
+<!--</h2>-->
+<!--<div id="logs-scroll"><div id="logs"><div class="empty">—</div></div></div>-->
 
 <script>
     (() => {
@@ -402,25 +402,25 @@
             } catch (e) { console.error(e); }
         }
 
-        async function loadLogs() {
-            try {
-                const logs = await (await fetch('/logs/connections')).json();
-                const el = $('logs');
-                if (!logs.length) { el.innerHTML = '<div class="empty">—</div>'; return; }
-                el.innerHTML = logs.slice(0, 200).map(l => {
-                    // FIX: connectionLogs entries use .type ('http_request'),
-                    // .method, .path; there is no separate WS type in the
-                    // current backend, so classify by presence of method.
-                    const cls = l.type === 'http_request' ? 'http' : 'ws';
-                    const method = l.method || l.type || '';
-                    return `<div class="log-entry ${cls}">
-                        <span class="ts">${esc((l.timestamp || '').slice(11, 23))}</span>
-                        <span class="m">${esc(method)}</span>
-                        <span class="p" title="${esc(l.path || '')}">${esc(l.path || '')}</span>
-                    </div>`;
-                }).join('');
-            } catch (e) { console.error(e); }
-        }
+        // async function loadLogs() {
+        //     try {
+        //         const logs = await (await fetch('/logs/connections')).json();
+        //         const el = $('logs');
+        //         if (!logs.length) { el.innerHTML = '<div class="empty">—</div>'; return; }
+        //         el.innerHTML = logs.slice(0, 200).map(l => {
+        //             // FIX: connectionLogs entries use .type ('http_request'),
+        //             // .method, .path; there is no separate WS type in the
+        //             // current backend, so classify by presence of method.
+        //             const cls = l.type === 'http_request' ? 'http' : 'ws';
+        //             const method = l.method || l.type || '';
+        //             return `<div class="log-entry ${cls}">
+        //                 <span class="ts">${esc((l.timestamp || '').slice(11, 23))}</span>
+        //                 <span class="m">${esc(method)}</span>
+        //                 <span class="p" title="${esc(l.path || '')}">${esc(l.path || '')}</span>
+        //             </div>`;
+        //         }).join('');
+        //     } catch (e) { console.error(e); }
+        // }
 
         // ----------------------------------------------------------------
         // Message log (HID / WS payloads)
@@ -744,11 +744,11 @@
             } catch (e) { console.error(e); }
         };
 
-        $('clear-logs').onclick = () => {
-            $('logs').innerHTML = '<div class="empty">—</div>';
-            logsClearedAt = Date.now();
-        };
-        let logsClearedAt = 0;
+        // $('clear-logs').onclick = () => {
+        //     $('logs').innerHTML = '<div class="empty">—</div>';
+        //     logsClearedAt = Date.now();
+        // };
+        // let logsClearedAt = 0;
 
         // ----------------------------------------------------------------
         // SSE: device list
@@ -782,16 +782,16 @@
         })();
 
         loadStatus();
-        loadLogs();
+        // loadLogs();
         loadMessages();
         connect();
 
         setInterval(loadStatus, 5000);
-        setInterval(() => {
-            // FIX: skip poll if the user just cleared; avoids the "clear
-            // button doesn't work" flicker in the original.
-            if (Date.now() - logsClearedAt > 8000) loadLogs();
-        }, 5000);
+        // setInterval(() => {
+        //     // FIX: skip poll if the user just cleared; avoids the "clear
+        //     // button doesn't work" flicker in the original.
+        //     if (Date.now() - logsClearedAt > 8000) loadLogs();
+        // }, 5000);
         setInterval(() => {
             if (Date.now() - msgsClearedAt > 8000) loadMessages();
         }, 2000);

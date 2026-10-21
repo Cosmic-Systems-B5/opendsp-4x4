@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { device, deviceManager } from "./state/device.ts";
+  // import { device, deviceManagerSvelte } from "./state/device.svelte.ts";
   import PatchBoard from "./components/PatchBoard.svelte";
   import TuningView from "./components/TuningView.svelte";
   import SystemView from "./components/SystemView.svelte";
@@ -23,26 +23,26 @@
     const init = async () => {
       try {
         // Restore device manager state (devices, servers)
-        deviceManager.restoreConnectionState();
+        // deviceManagerSvelte.restoreConnectionState();
 
         // Restore device connection state (serverGuid, deviceGuid)
-        device.restoreConnectionState();
+        // device.restoreConnectionState();
 
         console.log('Connection state restored');
 
         // Auto-connect to saved server URLs if available
-        const urls = device.webSocketUrls;
-        if (urls.length > 0) {
-          for (const url of urls) {
-            try {
-              console.log(`Attempting auto-connect to ${url}...`);
-              await device.connect(url);
-              break; // Stop after first successful connection
-            } catch (e) {
-              console.warn(`Auto-connect failed to ${url}:`, e);
-            }
-          }
-        }
+        // const urls = device.webSocketUrls;
+        // if (urls.length > 0) {
+        //   for (const url of urls) {
+        //     try {
+        //       console.log(`Attempting auto-connect to ${url}...`);
+        //       await device.connect(url);
+        //       break; // Stop after first successful connection
+        //     } catch (e) {
+        //       console.warn(`Auto-connect failed to ${url}:`, e);
+        //     }
+        //   }
+        // }
       } catch (e) {
         console.error('Error restoring connection state:', e);
       }
@@ -120,15 +120,15 @@
     <button class="view-btn" class:active={viewMode === "system"} onclick={() => (viewMode = "system")}>System</button>
   </div>
   <span class="spacer"></span>
-  <span class="dot" class:ok={device.connected}></span>
-  <span class="status" class:ok={device.connected}>{device.connected ? device.version || device.productName : device.error || "Not connected"}</span>
+<!--  <span class="dot" class:ok={device.connected}></span>-->
+<!--  <span class="status" class:ok={device.connected}>{device.connected ? device.version || device.productName : device.error || "Not connected"}</span>-->
 </header>
 
-{#if !device.connected}
-<div class="warn-box">
-    Not connected. Select System to configure connection.
-</div>
-{/if}
+<!--{#if !device.connected}-->
+<!--<div class="warn-box">-->
+<!--    Not connected. Select System to configure connection.-->
+<!--</div>-->
+<!--{/if}-->
 
 {#if viewMode === "routing"}
   <PatchBoard />

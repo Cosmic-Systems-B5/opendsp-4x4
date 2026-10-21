@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { device } from "../state/device.ts";
+  import { device } from "../state/device.svelte.ts";
   import Param from "./Param.svelte";
   import { Ratio } from "../protocol/commands.ts";
   let { index }: { index: number } = $props();

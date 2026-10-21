@@ -1,6 +1,6 @@
 <script lang="ts">
   // EQ panel that can show either PEQ controls or GEQ graph, with HPF/LPF always visible
-  import { device } from "../state/device.ts";
+  import { device } from "../state/device.svelte.ts";
   import EqBandList from "./EqBandList.svelte";
   import EqGraph from "./EqGraph.svelte";
   import type { ChannelEq } from "../eq/types.ts";
