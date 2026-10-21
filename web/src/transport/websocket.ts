@@ -192,8 +192,9 @@ export class WebSocketTransport implements DspTransport {
   private handleReportMessage(msg: DeviceReport): void {
     try {
       if (typeof msg.data === 'string') {
-        // Base64-encoded binary data
-        const bytes = new Uint8Array(msg.data.split('').map(c => c.charCodeAt(0)));
+        // Base64-encoded binary data - decode properly using atob
+        const decoded = atob(msg.data);
+        const bytes = new Uint8Array(decoded.length).map((_, i) => decoded.charCodeAt(i));
         this.handleReport(bytes);
       }
     } catch (err) {

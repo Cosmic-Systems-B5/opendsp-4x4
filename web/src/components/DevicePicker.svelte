@@ -105,12 +105,9 @@
   <div class="panel-content">
   <!-- Connection Section -->
   <div class="connection-section">
-    <h3>DSP Connections</h3>
-    <p class="hint">Configure WebSocket servers and connect to DSP units.</p>
-
+    <h3>Websocket Connections ({remoteUrls.length})</h3>
     <!-- Server URL configuration -->
-    <div class="url-config">
-      <h4>WebSocket Servers ({remoteUrls.length})</h4>
+<!--    <div class="url-config">-->
       <ul class="server-list">
         {#each remoteUrls as url, i}
           <li class="server-item">
@@ -136,67 +133,10 @@
         {/each}
       </ul>
 
-      <!-- Connected DSP Devices table (original style) -->
-      <h4>Connected DSP Units ({deviceManager.devices.filter(d => d.connected).length} connected, {deviceManager.devices.length - deviceManager.devices.filter(d => d.connected).length} saved)</h4>
-      <div class="device-list">
-        {#if deviceManager.devices.length > 0}
-          <table class="device-table">
-            <thead>
-              <tr>
-                <th>Status</th>
-                <th>Role</th>
-                <th>Product Name</th>
-                <th>Server GUID</th>
-                <th>Device GUID</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each deviceManager.devices as dev (dev.id)}
-                <tr class:master={dev.role === 'master'} class:slave={dev.role === 'slave'} class:disconnected={!dev.connected}>
-                  <td class="status-cell">
-                    {#if dev.connected}
-                      <span class="dot ok"></span>
-                    {:else}
-                      <span class="dot disconnected" title="Device saved for reconnection"></span>
-                    {/if}
-                  </td>
-                  <td>
-                    <span class="role-badge" class:role-master={dev.role === 'master'} class:role-slave={dev.role === 'slave'}>
-                      {#if dev.role === 'master'}M{:else}S{/if}
-                    </span>
-                    {#if dev.role === 'master'}<span class="role-label">Master</span>{/if}
-                  </td>
-                  <td class="product">{dev.connectionInfo.productName}</td>
-                  <td class="guid-cell" title="Server GUID">{dev.serverGuid ?? 'N/A'}</td>
-                  <td class="guid-cell" title="Device GUID">{dev.deviceGuid ?? 'N/A'}</td>
-                  <td class="action">
-                    {#if dev.connected}
-                      {#if dev.role === 'master'}
-                        <button class="btn-link disconnect-master" onclick={() => disconnectDSP(dev.id)}>
-                          Disconnect (Promotes Slave)
-                        </button>
-                      {:else}
-                        <button class="btn-link" onclick={() => disconnectDSP(dev.id)}>Disconnect</button>
-                      {/if}
-                    {:else}
-                      <button class="btn-link reconnect-btn" onclick={() => reconnectDSP(dev.id)}>Reconnect</button>
-                      <button class="btn-link remove-btn-small" onclick={() => removeSavedDevice(dev.id)}>Remove</button>
-                    {/if}
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        {:else}
-          <p class="no-devices">No DSP units connected. Connect to a server and connect to a DSP unit.</p>
-        {/if}
-      </div>
-
-      <div class="add-url-row" style:display={showUrlInput ? 'flex' : 'none'}>
-        <input type="text" bind:value={newServerUrl} placeholder="ws://server:port" />
-        <button onclick={addServerUrl} class="primary-btn">Add Server</button>
-      </div>
+        <div class="add-url-row" style:display={showUrlInput ? 'flex' : 'none'}>
+          <input type="text" bind:value={newServerUrl} placeholder="ws://server:port" />
+          <button onclick={addServerUrl} class="primary-btn">Add Server</button>
+        </div>
 
       <div class="controls">
         <button class="secondary-btn" onclick={() => {
@@ -206,27 +146,89 @@
           {#if showUrlInput}Cancel{:else}+ Add Server{/if}
         </button>
       </div>
+
     </div>
+  </div>
+  </div>
+
+<div class="device-picker">
+    <div class="panel-content">
+    <!-- Connected DSP Devices table (original style) -->
+    <h4>Connected DSP Units ({deviceManager.devices.filter(d => d.connected).length} connected, {deviceManager.devices.length - deviceManager.devices.filter(d => d.connected).length} saved)</h4>
+    <div class="device-list">
+      {#if deviceManager.devices.length > 0}
+        <table class="device-table">
+          <thead>
+          <tr>
+            <th>Status</th>
+            <th>Role</th>
+            <th>Product Name</th>
+            <th>Server GUID</th>
+            <th>Device GUID</th>
+            <th>Action</th>
+          </tr>
+          </thead>
+          <tbody>
+          {#each deviceManager.devices as dev (dev.id)}
+            <tr class:master={dev.role === 'master'} class:slave={dev.role === 'slave'} class:disconnected={!dev.connected}>
+              <td class="status-cell">
+                {#if dev.connected}
+                  <span class="dot ok"></span>
+                {:else}
+                  <span class="dot disconnected" title="Device saved for reconnection"></span>
+                {/if}
+              </td>
+              <td>
+                    <span class="role-badge" class:role-master={dev.role === 'master'} class:role-slave={dev.role === 'slave'}>
+                      {#if dev.role === 'master'}M{:else}S{/if}
+                    </span>
+                {#if dev.role === 'master'}<span class="role-label">Master</span>{/if}
+              </td>
+              <td class="product">{dev.connectionInfo.productName}</td>
+              <td class="guid-cell" title="Server GUID">{dev.serverGuid ?? 'N/A'}</td>
+              <td class="guid-cell" title="Device GUID">{dev.deviceGuid ?? 'N/A'}</td>
+              <td class="action">
+                {#if dev.connected}
+                  {#if dev.role === 'master'}
+                    <button class="btn-link disconnect-master" onclick={() => disconnectDSP(dev.id)}>
+                      Disconnect (Promotes Slave)
+                    </button>
+                  {:else}
+                    <button class="btn-link" onclick={() => disconnectDSP(dev.id)}>Disconnect</button>
+                  {/if}
+                {:else}
+                  <button class="btn-link reconnect-btn" onclick={() => reconnectDSP(dev.id)}>Reconnect</button>
+                  <button class="btn-link remove-btn-small" onclick={() => removeSavedDevice(dev.id)}>Remove</button>
+                {/if}
+              </td>
+            </tr>
+          {/each}
+          </tbody>
+        </table>
+      {:else}
+        <p class="no-devices">No DSP units connected. Connect to a server and connect to a DSP unit.</p>
+      {/if}
+    </div>
+    </div>
+</div>
 
     <!-- Summary bar -->
-    <div class="summary">
-      <span>Servers: {remoteUrls.length}</span>
-      <span>Connected DSPs: {deviceManager.devices.length}</span>
-      <span>Master: {#if deviceManager.master}<strong>{deviceManager.master.productName}</strong>{:else}-{/if}</span>
-    </div>
-  </div>
+<!--    <div class="summary">-->
+<!--      <span>Servers: {remoteUrls.length}</span>-->
+<!--      <span>Connected DSPs: {deviceManager.devices.length}</span>-->
+<!--      <span>Master: {#if deviceManager.master}<strong>{deviceManager.master.productName}</strong>{:else}-{/if}</span>-->
+<!--    </div>-->
 
-  <!-- Connection status bar at bottom -->
-  {#if device.connected}
-    <div class="status-bar">
-      <span class="dot ok"></span>
-      <span>Connected to server</span>
-    </div>
-  {:else}
-    <p class="hint">Add a WebSocket server URL and connect to manage DSP units.</p>
-  {/if}
-  </div>
-</div>
+<!--  &lt;!&ndash; Connection status bar at bottom &ndash;&gt;-->
+<!--  {#if device.connected}-->
+<!--    <div class="status-bar">-->
+<!--      <span class="dot ok"></span>-->
+<!--      <span>Connected to server</span>-->
+<!--    </div>-->
+<!--  {:else}-->
+<!--    <p class="hint">Add a WebSocket server URL and connect to manage DSP units.</p>-->
+<!--  {/if}-->
+
 
 <style>
   .device-picker { width: 100%; max-width: 900px; margin: 0 auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-panel); overflow: hidden; }
