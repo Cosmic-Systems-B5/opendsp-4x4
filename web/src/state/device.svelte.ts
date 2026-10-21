@@ -47,6 +47,8 @@ export class DeviceStore {
   selected = $state(-1); // selected channel index; -1 = nothing open (collapsed overview on load)
   eqLink = $state<Record<number, number>>({}); // output index -> linked partner (symmetric); EQ edits mirror
   role: DeviceRole = 'master'; // set by DeviceManager when multi-device is active
+  serverGuid?: string; // Unique GUID of the server this device is connected to
+  deviceGuid?: string; // Unique GUID of this DSP device
 
   currentPresetId = $state<string | null>(null); // GUID of the currently loaded preset from localStorage
 
@@ -85,9 +87,23 @@ export class DeviceStore {
 
     for (const serverUrl of urlsToTry) {
       try {
+        // Fetch server GUID from the server before connecting
+        let serverGuid: string | undefined;
+        try {
+          const httpUrl = serverUrl.replace(/^ws/, 'http');
+          const res = await fetch(`${httpUrl}/server-info`);
+          if (res.ok) {
+            const data = await res.json();
+            serverGuid = data.serverId;
+          }
+        } catch (e) {
+          console.warn(`Could not fetch server info from ${serverUrl}:`, e);
+        }
+
         const t = new WebSocketTransport(serverUrl.trim());
+        this.serverGuid = serverGuid;
         await this._bind(t);
-        console.log(`Connected to server: ${serverUrl}`);
+        console.log(`Connected to server: ${serverUrl} (GUID: ${serverGuid || 'N/A'})`);
         return;
       } catch (e) {
         console.log(`Failed to connect to ${serverUrl}: ${(e as Error).message}`);
@@ -127,11 +143,28 @@ export class DeviceStore {
     try { await this.hydrate(); } catch { /* readback is best-effort; UI keeps defaults */ }
     this.startMeters();
 
+    // Fetch and set deviceGuid from server
+    const httpUrl = t.url.replace(/^ws:/, 'http:');
+    try {
+      const res = await fetch(`${httpUrl}/connections`);
+      if (res.ok) {
+        const data = await res.json();
+        // Find the connection matching this URL and get its deviceGuid
+        const connection = data.connections.find((c: any) => c.path === t.url || c.url === t.url);
+        if (connection?.deviceGuid) {
+          this.deviceGuid = connection.deviceGuid;
+          console.log(`Device GUID for ${t.url}: ${connection.deviceGuid}`);
+        }
+      }
+    } catch (e) {
+      console.warn('Could not fetch device info:', e);
+    }
+
     // Register with DeviceManager
     deviceManager.connect(this, {
       url: t.url,
       productName: this.productName
-    }, 'websocket');
+    }, 'websocket', this.serverGuid);
   }
 
   /** Public version of _bind for direct transport attachment (e.g., multi-device scenarios) */

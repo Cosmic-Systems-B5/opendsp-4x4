@@ -18,6 +18,8 @@ export interface ConnectedDevice {
     productName: string;
     serialNumber?: string;
   };
+  serverGuid?: string;      // Unique GUID of the WebSocket server
+  deviceGuid?: string;      // Unique GUID of this DSP device (from server)
 }
 
 // WebSocket server connection info (separate from devices)
@@ -27,6 +29,7 @@ export interface ServerConnection {
   transportType: 'websocket';
   productName: string;
   connectedAt: string;
+  serverGuid?: string;  // Unique GUID of this server (from /server-info endpoint)
 }
 
 // Type for eq band updates - simplified to avoid TypeScript narrowing issues
@@ -56,7 +59,7 @@ class DeviceManagerState {
   /**
    * Connect to a WebSocket server (creates transport, not a device connection)
    */
-  connectServer(url: string, productName: string): ServerConnection | null {
+  connectServer(url: string, productName: string, serverGuid?: string): ServerConnection | null {
     // Check if already connected
     for (const existing of this.servers) {
       if (existing.url === url) {
@@ -70,6 +73,7 @@ class DeviceManagerState {
       url,
       transportType: 'websocket',
       productName,
+      serverGuid,
       connectedAt: new Date().toISOString()
     };
 
@@ -96,7 +100,7 @@ class DeviceManagerState {
     return [...this.servers];
   }
 
-  connect(deviceStore: typeof defaultDevice, connectionInfo: ConnectedDevice['connectionInfo'], transportType: 'usb' | 'websocket'): void {
+  connect(deviceStore: typeof defaultDevice, connectionInfo: ConnectedDevice['connectionInfo'], transportType: 'usb' | 'websocket', serverGuid?: string): void {
     // Determine the unique identifier for this device
     const identifier = transportType === 'usb' ? connectionInfo.path : connectionInfo.url;
 
@@ -106,7 +110,14 @@ class DeviceManagerState {
         ? existing.connectionInfo.path
         : existing.connectionInfo.url;
 
-      if (existingIdentifier === identifier && existing.transportType === transportType) {
+      // Use serverGuid + url/path combination to uniquely identify devices
+      // This allows multiple identical DSP units on the same server
+      const isSameDevice = existing.transportType === transportType &&
+        ((transportType === 'usb' && existing.connectionInfo.path === connectionInfo.path) ||
+         (transportType === 'websocket' && existing.connectionInfo.url === connectionInfo.url));
+
+      // If same URL/path but different serverGuid, this is a different connection
+      if (isSameDevice && (!serverGuid || existing.serverGuid === serverGuid)) {
         console.warn(`Device ${connectionInfo.productName} is already connected (${existing.id})`);
         return; // Don't add duplicate
       }
@@ -114,12 +125,17 @@ class DeviceManagerState {
 
     const role = this.devices.length === 0 ? 'master' : 'slave';
 
+    // Get deviceGuid from store if available
+    const deviceGuid = (deviceStore as any).deviceGuid;
+
     const connectedDevice: ConnectedDevice = {
       id: `${transportType}-${this.nextId++}`,
       store: deviceStore,
       role,
       transportType,
-      connectionInfo
+      connectionInfo,
+      serverGuid,
+      deviceGuid
     };
 
     this.devices.push(connectedDevice);

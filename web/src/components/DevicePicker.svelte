@@ -23,6 +23,21 @@
   async function connectServer(url: string) {
     connectingTo = url;
     try {
+      // First, get the server info to retrieve the server GUID
+      let serverGuid: string | undefined;
+      try {
+        const res = await fetch(`${url.replace(/^ws/, 'http')}/server-info`);
+        if (res.ok) {
+          const data = await res.json();
+          serverGuid = data.serverId;
+          console.log(`Server GUID for ${url}: ${serverGuid}`);
+        }
+      } catch (e) {
+        console.warn('Could not fetch server info:', e);
+        // Generate a client-side GUID as fallback
+        serverGuid = 'srv-' + Math.random().toString(36).substring(2, 7).toUpperCase();
+      }
+
       // Connect via websocketManager which handles the transport
       const productName = "DSP 4x4 (remote)";
       await websocketManager.connect(url, productName);
@@ -34,7 +49,7 @@
       await device.bind(t);
 
       // Register the server connection in DeviceManager for tracking
-      const server = deviceManager.connectServer(url, productName);
+      const server = deviceManager.connectServer(url, productName, serverGuid);
       if (server) {
         console.log(`Connected to server: ${url}`);
       }
@@ -114,7 +129,8 @@
                 <th>Status</th>
                 <th>Role</th>
                 <th>Product Name</th>
-                <th>Server URL</th>
+                <th>Server GUID</th>
+                <th>Device GUID</th>
                 <th>Action</th>
               </tr>
             </thead>
@@ -131,7 +147,8 @@
                     {#if dev.role === 'master'}<span class="role-label">Master</span>{/if}
                   </td>
                   <td class="product">{dev.connectionInfo.productName}</td>
-                  <td class="server-ip">{dev.connectionInfo.url ?? 'N/A'}</td>
+                  <td class="guid-cell" title="Server GUID">{dev.serverGuid ?? 'N/A'}</td>
+                  <td class="guid-cell" title="Device GUID">{dev.deviceGuid ?? 'N/A'}</td>
                   <td class="action">
                     {#if dev.role !== 'master'}
                       <button class="btn-link" onclick={() => disconnectDSP(dev.id)}>Disconnect</button>
@@ -251,6 +268,8 @@
   .role-label { margin-left: 6px; font-size: .7rem; color: var(--text-dim); }
   .product { font-weight: 500; color: var(--text); }
   .server-ip { font-family: monospace; color: var(--text-dim); font-size: .75rem; word-break: break-all; }
+  .guid-cell { font-family: monospace; color: var(--text-dim); font-size: .7rem; letter-spacing: .05em;
+               background: rgba(0,0,0,.03); padding: 2px 6px; border-radius: 3px; }
 
   .btn-link { background: none; border: none; color: #f66; cursor: pointer; font-size: .8rem; padding: 0; }
   .btn-link:hover { text-decoration: underline; }
