@@ -34,6 +34,55 @@ function generateServerId() {
 const SERVER_ID = generateServerId();
 console.log(`Server ID: ${SERVER_ID}`);
 
+/**
+ * Generate a unique GUID for a DSP device
+ * Uses serial number if available, otherwise generates a random one
+ */
+function generateDeviceGuid(serialNumber, path) {
+  const prefix = 'DSP-';
+  // Use serial number if available (real devices)
+  if (serialNumber && serialNumber.trim() !== '') {
+    return prefix + serialNumber.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  }
+  // For mock mode or devices without serial numbers, generate a deterministic GUID from path
+  let hash = 0;
+  for (let i = 0; i < path.length; i++) {
+    const char = path.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  // Convert to a readable format: DSP-XXXX where XXXX is hex representation
+  const hexHash = Math.abs(hash).toString(16).padStart(4, '0').toUpperCase();
+  return prefix + hexHash;
+}
+
+// Device GUID registry - maps path/serial to persistent GUIDs
+const deviceGuids = new Map();
+
+/**
+ * Get or create a GUID for a DSP device
+ */
+function getDeviceGuid(deviceInfo) {
+  const { serialNumber, path } = deviceInfo;
+  const key = serialNumber || path;
+
+  if (!deviceGuids.has(key)) {
+    // Generate and store a new GUID
+    const guid = generateDeviceGuid(serialNumber, path);
+    deviceGuids.set(key, guid);
+    console.log(`Assigned GUID ${guid} to device: ${key}`);
+  }
+
+  return deviceGuids.get(key);
+}
+
+/**
+ * Get all registered device GUIDs
+ */
+function getAllDeviceGuids() {
+  return Array.from(deviceGuids.entries()).map(([key, guid]) => ({ key, guid }));
+}
+
 // Global HID device reference
 let hidDevice = null;
 let reconnectTimer = null;
@@ -268,19 +317,59 @@ function sendToHid(bytes) {
 const connectedDevices = new Map();
 
 /**
+ * Get device info - either from actual HID device or mock configuration
+ */
+function getDeviceInfo() {
+  if (hidDevice) {
+    return {
+      path: hidDevice.path,
+      serialNumber: hidDevice.serialNumber || '',
+      product: hidDevice.product || 'DSP 4x4 Mini Pro'
+    };
+  }
+  if (MOCK_MODE) {
+    // In mock mode, create a consistent device info
+    const mockSerial = 'MOCK001';
+    return {
+      path: 'mock-device',
+      serialNumber: mockSerial,
+      product: 'DSP 4x4 Mini Pro (Mock)'
+    };
+  }
+  return null;
+}
+
+/**
  * Register a client as a DSP connection
  */
 function registerClient(ws, path) {
   // Use connectedDevices size to ensure unique IDs
   const id = `client-${connectedDevices.size}`;
+
+  // Get device info for GUID generation and metadata
+  const deviceInfo = getDeviceInfo();
+
   // Determine role: first connected device is master if no other master exists
   const hasMaster = Array.from(connectedDevices.values()).some(d => d.role === 'master');
-  const isMaster = !hasMaster && (!hidDevice || hidDevice.path === path);
+  let isMaster = !hasMaster;
+
+  // Adjust master determination based on actual device state
+  if (deviceInfo) {
+    isMaster = !hasMaster && (!hidDevice || hidDevice.path === path);
+  }
+
+  // Get or generate GUID for this DSP device
+  const serialNumber = deviceInfo ? deviceInfo.serialNumber : '';
+  const deviceGuid = getDeviceGuid({ serialNumber, path: deviceInfo ? deviceInfo.path : path });
+
   connectedDevices.set(id, {
     id,
     ws,
-    path,
+    path: deviceInfo ? deviceInfo.path : path,
     role: isMaster ? 'master' : 'slave',
+    deviceGuid,
+    serialNumber: serialNumber || '',
+    productName: deviceInfo ? deviceInfo.product : 'DSP 4x4 (remote)',
     connectedAt: new Date().toISOString()
   });
 }
@@ -344,6 +433,9 @@ function notifyConnectionChanges() {
   const connectionsInfo = Array.from(connectedDevices.values()).map(d => ({
     id: d.id,
     path: d.path,
+    deviceGuid: d.deviceGuid,
+    serialNumber: d.serialNumber,
+    productName: d.productName,
     role: d.role,
     connectedAt: d.connectedAt
   }));
@@ -429,15 +521,17 @@ const httpServer = createServer((req, res) => {
 
     // In mock mode, return a fake device
     if (MOCK_MODE && localDevices.length === 0) {
+      const mockDevice = {
+        path: 'mock-device',
+        vendorId: VENDOR_ID.toString(16),
+        productId: PRODUCT_ID.toString(16),
+        product: 'DSP 4x4 Mini Pro (Mock)',
+        serialNumber: 'MOCK001',
+        deviceGuid: getDeviceGuid({ serialNumber: 'MOCK001', path: 'mock-device' }),
+        role: 'master'
+      };
       res.end(JSON.stringify({
-        devices: [{
-          path: 'mock-device',
-          vendorId: VENDOR_ID.toString(16),
-          productId: PRODUCT_ID.toString(16),
-          product: 'DSP 4x4 Mini Pro (Mock)',
-          serialNumber: 'MOCK001',
-          role: 'master'
-        }],
+        devices: [mockDevice],
         connectedPath: null
       }));
       return;
@@ -459,6 +553,7 @@ const httpServer = createServer((req, res) => {
         productId: d.productId.toString(16),
         product: d.product || 'Unknown',
         serialNumber: d.serialNumber || '',
+        deviceGuid: getDeviceGuid({ serialNumber: d.serialNumber || '', path: d.path }),
         role: getRoleForPath(d.path)
       })),
       connectedPath: hidDevice ? hidDevice.path : null
@@ -469,9 +564,19 @@ const httpServer = createServer((req, res) => {
       connections: Array.from(connectedDevices.values()).map(d => ({
         id: d.id,
         path: d.path,
+        deviceGuid: d.deviceGuid,
+        serialNumber: d.serialNumber,
+        productName: d.productName,
         role: d.role,
         connectedAt: d.connectedAt
       }))
+    }));
+  } else if (req.url === '/device-guids' && req.method === 'GET') {
+    // Return all registered device GUIDs for mapping between paths and GUIDs
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      deviceGuids: getAllDeviceGuids(),
+      serverId: SERVER_ID
     }));
   } else if (req.url === '/mock' && req.method === 'POST') {
     // Toggle mock mode
@@ -497,6 +602,7 @@ const httpServer = createServer((req, res) => {
       port: process.env.PORT || 8765,
       host: localAddress,
       mockMode: MOCK_MODE,
+      deviceGuids: getAllDeviceGuids(),
       timestamp: new Date().toISOString()
     }));
   } else if (req.url === '/' && req.method === 'GET') {
