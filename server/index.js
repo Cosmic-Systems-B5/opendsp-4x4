@@ -270,6 +270,30 @@ function disconnectHid() {
   clearTimeout(reconnectTimer);
 }
 
+/**
+ * Send initial mock device state to a client
+ */
+function sendMockInitialStatus(ws) {
+  // Send GET_STATUS response
+  const statusFrame = buildReplyFrame([0x01, 0x00, 0x01, 0x02]); // status = 0x02 (ready)
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'report', data: btoa(String.fromCharCode(...statusFrame)) }));
+  }
+
+  // Send GET_VERSION response
+  const versionStr = "4x4MINIPRO V010";
+  const versionPayload = [0x01, 0x00, 1 + versionStr.length, 0x52];
+  for (const c of versionStr) {
+    versionPayload.push(c.charCodeAt(0));
+  }
+  const versionFrame = buildReplyFrame(versionPayload);
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'report', data: btoa(String.fromCharCode(...versionFrame)) }));
+  }
+
+  console.log('[MOCK] Sent initial device state to client');
+}
+
 // WebSocket clients connected to this server
 let clients = new Set();
 
@@ -754,6 +778,13 @@ wss.on('connection', (ws) => {
 
   // Notify subscribers of connection change
   notifyConnectionChanges();
+
+  // Send initial status report in mock mode
+  if (MOCK_MODE) {
+    setTimeout(() => {
+      sendMockInitialStatus(ws);
+    }, 100);
+  }
 
   // If this is the first client, try to connect to HID if not already (not in mock mode)
   if (!MOCK_MODE && clients.size === 1 && !hidDevice) {
