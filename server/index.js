@@ -111,15 +111,28 @@ async function connectHid() {
     hidDevice = new NodeHid.HID(dev.path);
     console.log('Connected to HID device');
 
+    // Start settings updates
+    ensureSettingsUpdates();
+
     // Listen for input reports from the device
     hidDevice.on('data', (buffer) => {
       const bytes = Array.from(buffer);
       broadcastReport(bytes);
+      notifySettingsChanged(); // Update settings display on data
     });
 
   } catch (err) {
     console.error(`HID connect failed: ${err.message}`);
     disconnectHid();
+  }
+}
+
+/**
+ * Start settings updates when HID is connected or mock mode is active
+ */
+function ensureSettingsUpdates() {
+  if ((hidDevice || MOCK_MODE) && !settingsInterval) {
+    startSettingsUpdates();
   }
 }
 
@@ -268,6 +281,9 @@ function disconnectHid() {
     hidDevice = null;
   }
   clearTimeout(reconnectTimer);
+
+  // Stop settings updates when disconnected
+  stopSettingsUpdates();
 }
 
 /**
@@ -610,6 +626,14 @@ const httpServer = createServer((req, res) => {
       try {
         const { enable } = JSON.parse(body.join(''));
         process.env.MOCK_MODE = String(!!enable);
+
+        // Start or stop settings updates based on mock mode state
+        if (MOCK_MODE || hidDevice) {
+          ensureSettingsUpdates();
+        } else {
+          stopSettingsUpdates();
+        }
+
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ message: `Mock mode ${enable ? 'enabled' : 'disabled'}`, enabled: enable }));
       } catch (e) {
@@ -629,6 +653,169 @@ const httpServer = createServer((req, res) => {
       deviceGuids: getAllDeviceGuids(),
       timestamp: new Date().toISOString()
     }));
+  } else if (req.url === '/settings' && req.method === 'GET') {
+    // Settings page with real-time DSP settings display
+    const localAddress = getLocalAddress();
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(`<!DOCTYPE html>
+<html lang="en"><head><title>openDSP-4x4 Settings - ${SERVER_ID}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+body { font-family: system-ui, -apple-system, sans-serif; max-width: 1200px; margin: 0 auto; padding: 1rem; background: #1a1a2e; color: #eee; }
+header { display: flex; align-items: center; gap: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--line); }
+.server-id { background: #3b82f6; padding: 0.25rem 0.5rem; border-radius: 4px; font-family: monospace; color: white; }
+.status-ok { color: #4ade80; }
+.status-warn { color: #fbbf24; }
+.status-err { color: #f87171; }
+
+.routing-matrix { display: grid; grid-template-columns: 50px repeat(4, 1fr); gap: 4px; margin-top: 1rem; }
+.matrix-cell { background: #2d2d44; padding: 8px; text-align: center; border-radius: 4px; font-size: .75rem; }
+.matrix-header { background: #3b82f6; color: white; font-weight: bold; }
+.matrix-row-label { background: #4b5563; color: white; text-align: right; padding-right: 10px; }
+
+.channel-group { margin-bottom: 1.5rem; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.channel-header { background: #2d2d44; padding: .75rem 1rem; font-weight: bold; display: flex; justify-content: space-between; align-items: center; }
+.channel-body { padding: 1rem; }
+.param-row { display: flex; gap: 1rem; margin-bottom: .5rem; flex-wrap: wrap; }
+.param-label { color: #9ca3af; font-size: .85rem; min-width: 80px; }
+.param-value { color: var(--good); font-family: monospace; }
+
+footer { padding: 1rem; border-top: 1px solid var(--line); margin-top: 2rem; text-align: center; font-size: .8rem; color: #6b7280; }
+</style>
+</head>
+<body>
+<header>
+  <h1>openDSP-4x4 DSP Settings</h1>
+  <span class="server-id">${SERVER_ID}</span>
+  <span>Status: ${hidDevice ? '<span class="status-ok">Connected to DSP</span>' : (MOCK_MODE ? '<span class="status-warn">Mock Mode</span>' : '<span class="status-err">Not Connected</span>')}</span>
+</header>
+
+<div id="settings-content">
+  <h2>Routing Matrix</h2>
+  <div class="routing-matrix" id="routing-display"></div>
+
+  <h2 style="margin-top: 2rem;">Channel Settings</h2>
+  <div id="channels-container"></div>
+</div>
+
+<footer>
+  Real-time DSP settings display | <a href="/">Back to Bridge</a>
+</footer>
+
+<script>
+// Fetch initial settings
+async function loadSettings() {
+  try {
+    const res = await fetch('/server-info');
+    if (res.ok) {
+      console.log('Server info loaded');
+    }
+  } catch (e) { console.error('Failed to load:', e); }
+}
+
+loadSettings();
+
+// SSE for real-time updates
+const eventSource = new EventSource('/settings/updates');
+eventSource.onmessage = (e) => {
+  try {
+    const data = JSON.parse(e.data);
+    console.log('Settings update:', data.timestamp);
+
+    // Update routing matrix
+    if (data.routing) {
+      const display = document.getElementById('routing-display');
+      if (display) {
+        display.innerHTML = '';
+
+        // Header row
+        ['In1', 'In2', 'In3', 'In4'].forEach(label => {
+          const div = document.createElement('div');
+          div.className = 'matrix-cell matrix-header';
+          div.textContent = label;
+          display.appendChild(div);
+        });
+
+        // Row for each output
+        data.routing.forEach((mask, outIdx) => {
+          const rowLabel = document.createElement('div');
+          rowLabel.className = 'matrix-cell matrix-row-label';
+          rowLabel.textContent = 'Out' + (outIdx + 1);
+          display.appendChild(rowLabel);
+
+          [0x01, 0x02, 0x04, 0x08].forEach(inputMask => {
+            const cell = document.createElement('div');
+            cell.className = 'matrix-cell';
+            if ((mask & inputMask) !== 0) {
+              cell.style.background = '#10b981';
+              cell.textContent = 'X';
+            }
+            display.appendChild(cell);
+          });
+        });
+      }
+    }
+
+    // Update channels (simplified)
+    if (data.channels) {
+      const container = document.getElementById('channels-container');
+      if (container && data.channels.length > 0) {
+        container.innerHTML = '';
+
+        data.channels.forEach((ch, idx) => {
+          const group = document.createElement('div');
+          group.className = 'channel-group';
+          group.innerHTML = \`
+            <div class="channel-header">
+              <span>Channel \${idx + 1}</span>
+              <span>\${ch.gainDb !== null ? ch.gainDb.toFixed(1) + ' dB' : '-'} gain</span>
+            </div>
+            <div class="channel-body">
+              <div class="param-row">
+                <span class="param-label">Mute:</span>
+                <span class="param-value">\${ch.mute ? 'ON' : 'OFF'}</span>
+              </div>
+              <div class="param-row">
+                <span class="param-label">Delay:</span>
+                <span class="param-value">\${ch.delayMs !== null ? ch.delayMs.toFixed(1) + ' ms' : '-'}</span>
+              </div>
+            </div>
+          \`;
+          container.appendChild(group);
+        });
+      }
+    }
+  } catch (err) { console.error('Settings parse error:', err); }
+};
+eventSource.onerror = (e) => {
+  console.log('Settings SSE connection closed');
+};
+</script>
+</body></html>`);
+  } else if (req.url === '/settings/updates' && req.method === 'GET') {
+    // SSE endpoint for real-time settings updates
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive'
+    });
+
+    const callback = (msg) => {
+      try {
+        res.write(msg + '\n\n');
+      } catch (e) {
+        console.error('Error sending settings update:', e.message);
+      }
+    };
+
+    settingsSubscribers.add(callback);
+
+    // Send initial state immediately
+    notifySettingsChanged();
+
+    req.on('close', () => {
+      settingsSubscribers.delete(callback);
+    });
   } else if (req.url === '/' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'text/html' });
     const mockMode = process.env.MOCK_MODE === 'true';
@@ -725,6 +912,69 @@ eventSource.onmessage = (e) => {
 eventSource.onerror = (e) => {
   console.log('SSE connection closed');
 };
+
+// Real-time DSP settings updates via SSE
+const settingsSubscribers = new Set();
+
+function subscribeToSettings(callback) {
+  settingsSubscribers.add(callback);
+  return () => settingsSubscribers.delete(callback);
+}
+
+function notifySettingsChanged() {
+  if (settingsSubscribers.size === 0 || (!hidDevice && !MOCK_MODE)) return;
+
+  // Build current DSP state
+  const channels = Array.from({ length: 8 }, (_, i) => ({
+    index: i,
+    name: `Channel ${i}`,
+    gainDb: 0,
+    mute: false,
+    polarity: false,
+    delayMs: null,
+    eq: {
+      hpf: { freqHz: 20, slope: -12 },
+      lpf: { freqHz: 20000, slope: -12 },
+      bands: Array.from({ length: 7 }, (_, b) => ({
+        type: 'peak', freqHz: 1000 * (b + 1), gainDb: 0, bwOct: 1
+      }))
+    }
+  }));
+
+  const routing = [0x01, 0x02, 0x04, 0x08]; // Default diagonal routing
+
+  const msg = JSON.stringify({
+    type: 'settings_update',
+    timestamp: new Date().toISOString(),
+    channels,
+    routing
+  });
+
+  for (const callback of settingsSubscribers) {
+    try {
+      callback(msg);
+    } catch (e) {
+      console.error('Error in settings subscriber:', e.message);
+    }
+  }
+}
+
+// Schedule periodic settings updates
+let settingsInterval = null;
+function startSettingsUpdates() {
+  if (settingsInterval) clearInterval(settingsInterval);
+  if (MOCK_MODE || hidDevice) {
+    notifySettingsChanged();
+    settingsInterval = setInterval(() => {
+      notifySettingsChanged();
+    }, 1000); // Update every second
+  }
+}
+
+// Stop settings updates when disconnected
+function stopSettingsUpdates() {
+  if (settingsInterval) clearInterval(settingsInterval);
+}
 </script>
 </body></html>`);
   } else {
@@ -790,6 +1040,9 @@ wss.on('connection', (ws) => {
   if (!MOCK_MODE && clients.size === 1 && !hidDevice) {
     setTimeout(connectHid, 500);
   }
+
+  // Start settings updates if we have a device or are in mock mode
+  ensureSettingsUpdates();
 
   ws.on('message', (data) => {
     try {
