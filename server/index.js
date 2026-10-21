@@ -763,11 +763,8 @@ wss.on('connection', (ws) => {
     // Notify subscribers of connection change
     notifyConnectionChanges();
 
-    // If no more clients, disconnect HID
-    if (clients.size === 0) {
-      console.log('No clients connected, disconnecting HID...');
-      setTimeout(disconnectHid, 1000); // Delay to allow reconnection of same client
-    }
+    // Note: HID is NOT automatically disconnected when client disconnects.
+    // It remains connected for other clients or manual disconnection.
   });
 
   ws.on('error', (err) => {

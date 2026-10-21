@@ -20,6 +20,15 @@ export interface ConnectedDevice {
   };
 }
 
+// WebSocket server connection info (separate from devices)
+export interface ServerConnection {
+  id: string;
+  url: string;
+  transportType: 'websocket';
+  productName: string;
+  connectedAt: string;
+}
+
 // Type for eq band updates - simplified to avoid TypeScript narrowing issues
 export interface EqBandUpdates {
   freqHz?: number;
@@ -33,6 +42,7 @@ export interface EqBandUpdates {
 
 class DeviceManagerState {
   devices: ConnectedDevice[] = [];
+  servers: ServerConnection[] = [];
   nextId = 0;
 
   get master(): typeof defaultDevice | undefined {
@@ -41,6 +51,49 @@ class DeviceManagerState {
 
   get slaveCount(): number {
     return this.devices.filter(d => d.role === 'slave').length;
+  }
+
+  /**
+   * Connect to a WebSocket server (creates transport, not a device connection)
+   */
+  connectServer(url: string, productName: string): ServerConnection | null {
+    // Check if already connected
+    for (const existing of this.servers) {
+      if (existing.url === url) {
+        console.warn(`Server ${url} is already connected`);
+        return null;
+      }
+    }
+
+    const server: ServerConnection = {
+      id: `server-${this.nextId++}`,
+      url,
+      transportType: 'websocket',
+      productName,
+      connectedAt: new Date().toISOString()
+    };
+
+    this.servers.push(server);
+    return server;
+  }
+
+  /**
+   * Disconnect from a WebSocket server
+   */
+  disconnectServer(url: string): void {
+    const idx = this.servers.findIndex(s => s.url === url);
+    if (idx >= 0) {
+      this.servers.splice(idx, 1);
+    }
+    // Also disconnect any devices on this server
+    this.devices = this.devices.filter(d => d.connectionInfo.url !== url);
+  }
+
+  /**
+   * Get all connected servers
+   */
+  getServers(): ServerConnection[] {
+    return [...this.servers];
   }
 
   connect(deviceStore: typeof defaultDevice, transportType: 'usb' | 'websocket', connectionInfo: ConnectedDevice['connectionInfo']): void {
