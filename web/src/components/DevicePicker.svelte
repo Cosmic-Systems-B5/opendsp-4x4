@@ -1,5 +1,7 @@
 <script lang="ts">
   import { device, deviceManager } from "../state/device.svelte.ts";
+  import { websocketManager } from "../state/websocket-manager.ts";
+  import { WebSocketTransport } from "../transport/websocket.ts";
 
   let remoteUrls = $state<Array<string>>([]);
   let connectingTo = $state<string | null>(null);
@@ -13,19 +15,22 @@
    * Check if a server has an active WebSocket connection
    */
   function isServerConnected(url: string): boolean {
-    return deviceManager.servers.some(s => s.url === url);
+    return websocketManager.isConnected(url);
   }
 
   async function connectServer(url: string) {
     connectingTo = url;
     try {
-      // Connect to the WebSocket server (transport layer)
-      await device.connect(url);
-
-      // Register the server connection in DeviceManager
+      // Connect via websocketManager which handles the transport
       const productName = "DSP 4x4 (remote)";
-      const server = deviceManager.connectServer(url, productName);
+      await websocketManager.connect(url, productName);
 
+      // Now bind to a device (create a device connection on this transport)
+      const t = new WebSocketTransport(url);
+      await device.bind(t);
+
+      // Register the server connection in DeviceManager for tracking
+      const server = deviceManager.connectServer(url, productName);
       if (server) {
         console.log(`Connected to server: ${url}`);
       }
@@ -38,6 +43,7 @@
   }
 
   function disconnectServer(url: string) {
+    websocketManager.disconnect(url);
     deviceManager.disconnectServer(url);
   }
 

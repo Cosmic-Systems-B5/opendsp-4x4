@@ -9,6 +9,7 @@ import { thresholdRawToDb, samplesToMs, rawToQ, peqIndexToHz } from "../protocol
 import { levelsFromReply, reconstructPresetImage, parsePresetImage } from "../protocol/readback.ts";
 import { makeChannels, defaultChannel, OUT_BASE, DEFAULT_BAND_FREQS, type Channel } from "./model.ts";
 import { deviceManager } from "./device-manager.ts";
+import { websocketManager } from "./websocket-manager.ts";
 import presetManager from "./preset-manager.ts";
 
 const DEFAULTS_KEY = "opendsp-defaults";
@@ -130,7 +131,7 @@ export class DeviceStore {
     deviceManager.connect(this, {
       url: t.url,
       productName: this.productName
-    });
+    }, 'websocket');
   }
 
   /** Public version of _bind for direct transport attachment (e.g., multi-device scenarios) */

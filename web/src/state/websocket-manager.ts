@@ -78,6 +78,14 @@ class WebSocketManagerState {
   isConnected(url: string): boolean {
     return this.connections.has(url);
   }
+
+  /**
+   * Get the transport for a specific URL
+   */
+  getTransport(url: string): WebSocketTransport | undefined {
+    const conn = this.connections.get(url);
+    return conn?.transport;
+  }
 }
 
 export const websocketManager = new WebSocketManagerState();

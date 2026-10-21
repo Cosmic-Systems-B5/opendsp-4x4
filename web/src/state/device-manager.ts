@@ -11,8 +11,9 @@ export interface ConnectedDevice {
   id: string;
   store: typeof defaultDevice;
   role: DeviceRole;
+  transportType: 'usb' | 'websocket';
   connectionInfo: {
-    url: string;
+    url?: string;
     productName: string;
     serialNumber?: string;
   };
@@ -94,10 +95,17 @@ class DeviceManagerState {
     return [...this.servers];
   }
 
-  connect(deviceStore: typeof defaultDevice, connectionInfo: ConnectedDevice['connectionInfo']): void {
-    // Check if a device with the same URL is already connected (prevents duplicate connections)
+  connect(deviceStore: typeof defaultDevice, connectionInfo: ConnectedDevice['connectionInfo'], transportType: 'usb' | 'websocket'): void {
+    // Determine the unique identifier for this device
+    const identifier = transportType === 'usb' ? connectionInfo.path : connectionInfo.url;
+
+    // Check if a device with the same path/url is already connected (prevents duplicate connections)
     for (const existing of this.devices) {
-      if (existing.connectionInfo.url === connectionInfo.url) {
+      const existingIdentifier = existing.transportType === 'usb'
+        ? existing.connectionInfo.path
+        : existing.connectionInfo.url;
+
+      if (existingIdentifier === identifier && existing.transportType === transportType) {
         console.warn(`Device ${connectionInfo.productName} is already connected (${existing.id})`);
         return; // Don't add duplicate
       }
@@ -106,9 +114,10 @@ class DeviceManagerState {
     const role = this.devices.length === 0 ? 'master' : 'slave';
 
     const connectedDevice: ConnectedDevice = {
-      id: `ws-${this.nextId++}`,
+      id: `${transportType}-${this.nextId++}`,
       store: deviceStore,
       role,
+      transportType,
       connectionInfo
     };
 
@@ -116,12 +125,20 @@ class DeviceManagerState {
   }
 
   disconnect(id: string): void {
+    const deviceToDisconnect = this.devices.find(d => d.id === id);
+    if (!deviceToDisconnect) return;
+
     const idx = this.devices.findIndex(d => d.id === id);
     if (idx >= 0) {
       this.devices.splice(idx, 1);
-      if (this.devices.length > 0 && this.devices[0]!.role !== 'master') {
+
+      // If we disconnected the master and there are still devices connected,
+      // make the first one the new master
+      if (deviceToDisconnect.role === 'master' && this.devices.length > 0) {
         this.devices[0]!.role = 'master';
       }
+
+      // If we disconnected a slave, no role change needed
     }
   }
 
