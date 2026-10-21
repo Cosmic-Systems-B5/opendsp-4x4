@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { device } from "./state/device.svelte.ts";
+  import { device, deviceManager } from "./state/device.svelte.ts";
   import PatchBoard from "./components/PatchBoard.svelte";
   import TuningView from "./components/TuningView.svelte";
   import SystemView from "./components/SystemView.svelte";
@@ -16,6 +16,39 @@
     } catch (e) {
       // Ignore storage errors
     }
+  });
+
+  // Initialize and restore connection state on page load
+  $effect(() => {
+    const init = async () => {
+      try {
+        // Restore device manager state (devices, servers)
+        deviceManager.restoreConnectionState();
+
+        // Restore device connection state (serverGuid, deviceGuid)
+        device.restoreConnectionState();
+
+        console.log('Connection state restored');
+
+        // Auto-connect to saved server URLs if available
+        const urls = device.webSocketUrls;
+        if (urls.length > 0) {
+          for (const url of urls) {
+            try {
+              console.log(`Attempting auto-connect to ${url}...`);
+              await device.connect(url);
+              break; // Stop after first successful connection
+            } catch (e) {
+              console.warn(`Auto-connect failed to ${url}:`, e);
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Error restoring connection state:', e);
+      }
+    };
+
+    init();
   });
 
   // Flash message state - supports both auto-dismissing messages and confirmations

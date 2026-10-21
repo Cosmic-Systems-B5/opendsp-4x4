@@ -165,6 +165,10 @@ export class DeviceStore {
       url: t.url,
       productName: this.productName
     }, 'websocket', this.serverGuid);
+
+    // Save connection state to localStorage
+    this.saveConnectionState();
+    deviceManager.saveConnectionState();
   }
 
   /** Public version of _bind for direct transport attachment (e.g., multi-device scenarios) */
@@ -906,6 +910,42 @@ export class DeviceStore {
   updateServerUrl(index: number, newUrl: string): void {
     webSocketUrls[index] = newUrl;
     saveWebSocketUrls(webSocketUrls);
+  }
+
+  // --- Connection State Persistence ---
+  saveConnectionState(): void {
+    try {
+      const state = {
+        serverGuid: this.serverGuid,
+        deviceGuid: this.deviceGuid,
+        connectedAt: new Date().toISOString()
+      };
+      localStorage.setItem("opendsp-connection-state", JSON.stringify(state));
+    } catch (e) {
+      console.error('Error saving connection state:', e);
+    }
+  }
+
+  restoreConnectionState(): void {
+    try {
+      const raw = localStorage.getItem("opendsp-connection-state");
+      if (raw) {
+        const state = JSON.parse(raw);
+        this.serverGuid = state.serverGuid;
+        this.deviceGuid = state.deviceGuid;
+        console.log('Restored connection state:', state);
+      }
+    } catch (e) {
+      console.error('Error restoring connection state:', e);
+    }
+  }
+
+  clearConnectionState(): void {
+    try {
+      localStorage.removeItem("opendsp-connection-state");
+    } catch (e) {
+      console.error('Error clearing connection state:', e);
+    }
   }
 }
 

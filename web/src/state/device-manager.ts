@@ -50,11 +50,12 @@ class DeviceManagerState {
   nextId = 0;
 
   get master(): typeof defaultDevice | undefined {
-    return this.devices.find(d => d.role === 'master')?.store;
+    // Find the first connected device with master role
+    return this.devices.find(d => d.role === 'master' && d.connected)?.store;
   }
 
   get slaveCount(): number {
-    return this.devices.filter(d => d.role === 'slave').length;
+    return this.devices.filter(d => d.role === 'slave' && d.connected).length;
   }
 
   /**
@@ -165,6 +166,9 @@ class DeviceManagerState {
     }
 
     console.log(`Device ${id} disconnected, marked as ${deviceToDisconnect.role}`);
+
+    // Save connection state to localStorage
+    this.saveConnectionState();
   }
 
   /**
@@ -175,6 +179,9 @@ class DeviceManagerState {
     if (device) {
       device.connected = true;
       console.log(`Device ${id} reconnected`);
+
+      // Save connection state to localStorage
+      this.saveConnectionState();
     }
   }
 
@@ -190,7 +197,7 @@ class DeviceManagerState {
     if (!masterDevice || this.slaveCount === 0) return;
 
     for (const device of this.devices) {
-      if (device.role === 'slave') {
+      if (device.role === 'slave' && device.connected) {
         const ch = device.store.channels[channelIndex];
         if (ch) {
           Object.assign(ch, updates);
@@ -206,7 +213,7 @@ class DeviceManagerState {
     if (!masterDevice || this.slaveCount === 0) return;
 
     for (const device of this.devices) {
-      if (device.role === 'slave') {
+      if (device.role === 'slave' && device.connected) {
         const routingIndex = outIndex - 0x04;
         if (routingIndex >= 0 && routingIndex < device.store.routing.length) {
           device.store.routing[routingIndex] = mask;
@@ -222,7 +229,7 @@ class DeviceManagerState {
     if (!masterDevice || this.slaveCount === 0) return;
 
     for (const device of this.devices) {
-      if (device.role === 'slave') {
+      if (device.role === 'slave' && device.connected) {
         device.store.eqLink = { ...device.store.eqLink, [a]: b, [b]: a };
       }
     }
@@ -233,7 +240,7 @@ class DeviceManagerState {
     if (!masterDevice || this.slaveCount === 0) return;
 
     for (const device of this.devices) {
-      if (device.role === 'slave') {
+      if (device.role === 'slave' && device.connected) {
         const ch = device.store.channels[channelIndex];
         // @ts-ignore - TypeScript narrowing issue with nested optional properties
         const eq = ch?.eq;
@@ -252,7 +259,7 @@ class DeviceManagerState {
     if (!masterDevice || this.slaveCount === 0) return;
 
     for (const device of this.devices) {
-      if (device.role === 'slave') {
+      if (device.role === 'slave' && device.connected) {
         const ch = device.store.channels[channelIndex];
         // @ts-ignore - TypeScript narrowing issue with nested optional properties
         const eq = ch?.eq;
@@ -270,7 +277,7 @@ class DeviceManagerState {
     if (!masterDevice || this.slaveCount === 0) return;
 
     for (const device of this.devices) {
-      if (device.role === 'slave') {
+      if (device.role === 'slave' && device.connected) {
         // Convert $state to plain objects for cloning
         device.store.channels = masterDevice.channels.map(ch => ({
           index: ch.index,
@@ -293,6 +300,79 @@ class DeviceManagerState {
         device.store.routing = [...masterDevice.routing];
         device.store.eqLink = { ...masterDevice.eqLink };
       }
+    }
+  }
+
+  // --- Connection State Persistence ---
+  saveConnectionState(): void {
+    try {
+      const state = {
+        devices: this.devices.map(d => ({
+          id: d.id,
+          role: d.role,
+          transportType: d.transportType,
+          connectionInfo: d.connectionInfo,
+          serverGuid: d.serverGuid,
+          deviceGuid: d.deviceGuid,
+          connected: d.connected
+        })),
+        servers: this.servers.map(s => ({
+          id: s.id,
+          url: s.url,
+          productName: s.productName,
+          serverGuid: s.serverGuid,
+          connectedAt: s.connectedAt
+        }))
+      };
+      localStorage.setItem("opendsp-device-manager-state", JSON.stringify(state));
+    } catch (e) {
+      console.error('Error saving device manager state:', e);
+    }
+  }
+
+  restoreConnectionState(): void {
+    try {
+      const raw = localStorage.getItem("opendsp-device-manager-state");
+      if (raw) {
+        const state = JSON.parse(raw);
+
+        // Restore devices
+        this.devices = state.devices.map((d: any) => ({
+          id: d.id,
+          store: device, // Will be replaced when we reconnect
+          role: d.role as DeviceRole,
+          transportType: d.transportType,
+          connectionInfo: d.connectionInfo,
+          serverGuid: d.serverGuid,
+          deviceGuid: d.deviceGuid,
+          connected: d.connected
+        }));
+
+        // Restore servers
+        this.servers = state.servers.map((s: any) => ({
+          id: s.id,
+          url: s.url,
+          transportType: s.transportType as 'websocket',
+          productName: s.productName,
+          serverGuid: s.serverGuid,
+          connectedAt: s.connectedAt
+        }));
+
+        console.log('Restored device manager state:', {
+          devices: this.devices.length,
+          servers: this.servers.length
+        });
+      }
+    } catch (e) {
+      console.error('Error restoring device manager state:', e);
+    }
+  }
+
+  clearConnectionState(): void {
+    try {
+      localStorage.removeItem("opendsp-device-manager-state");
+    } catch (e) {
+      console.error('Error clearing device manager state:', e);
     }
   }
 }
