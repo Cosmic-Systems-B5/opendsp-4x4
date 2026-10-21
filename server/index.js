@@ -260,6 +260,17 @@ function handleMockHidWrite(bytes) {
         }
 
         const replyFrame = buildReplyFrame(replyPayload);
+
+        // Log the mock response as outbound message
+        addMessageLog({
+          timestamp: new Date().toISOString(),
+          type: 'mock_response',
+          direction: 'outbound',
+          commandCode: code,
+          payloadHex: bytesToHex(Array.from(replyFrame)),
+          payloadString: tryDecodeString(Array.from(replyFrame).slice(4, -1))
+        });
+
         broadcastReport(Array.from(replyFrame));
       }
     } catch (e) {
@@ -319,6 +330,14 @@ let clients = new Set();
 function broadcastReport(reportBytes) {
   if (clients.size === 0 || (!hidDevice && !MOCK_MODE)) return;
 
+  // Log the report as outbound message to clients
+  addMessageLog({
+    timestamp: new Date().toISOString(),
+    type: 'report',
+    direction: 'outbound',
+    payload: btoa(String.fromCharCode(...reportBytes))
+  });
+
   const data = btoa(String.fromCharCode(...reportBytes));
   const msg = JSON.stringify({ type: 'report', data });
   for (const client of clients) {
@@ -337,6 +356,15 @@ function broadcastReport(reportBytes) {
  * Send a request to the HID device (or mock handler)
  */
 function sendToHid(bytes) {
+  // Log the request as inbound message from client
+  addMessageLog({
+    timestamp: new Date().toISOString(),
+    type: 'request',
+    direction: 'inbound',
+    payloadHex: bytesToHex(bytes),
+    payloadBase64: btoa(String.fromCharCode(...bytes))
+  });
+
   // In mock mode, use the mock handler instead of real HID
   if (MOCK_MODE) {
     return handleMockHidWrite(bytes);
@@ -446,15 +474,51 @@ const connectionLogs = [];
 const messageLogs = [];
 const MAX_LOGS = 100;
 
-// Add to logs, with limit
-function addConnectionLog(entry) {
-  connectionLogs.unshift(entry);
-  if (connectionLogs.length > MAX_LOGS) {
-    connectionLogs.pop();
-  }
+/**
+ * Convert bytes to hex string for display
+ */
+function bytesToHex(bytes) {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(' ');
 }
 
+/**
+ * Try to decode bytes as ASCII/UTF-8 string
+ */
+function tryDecodeString(bytes) {
+  try {
+    // Skip non-printable characters at start/end
+    const printable = bytes.filter(b => b >= 32 && b < 127);
+    if (printable.length > bytes.length * 0.5) {
+      return String.fromCharCode(...bytes).replace(/[^\x20-\x7E]/g, '');
+    }
+  } catch (e) {}
+  return null;
+}
+
+/**
+ * Log a message with full details including hex and string representation
+ */
 function addMessageLog(entry) {
+  // Parse payload if it's base64-encoded binary data
+  let payloadBytes = [];
+
+  if (entry.payload && typeof entry.payload === 'string') {
+    try {
+      // Check if it looks like base64
+      const decoded = atob(entry.payload);
+      if (decoded) {
+        payloadBytes = Array.from(decoded).map(c => c.charCodeAt(0));
+        // Store the original and decoded versions
+        entry.payloadBase64 = entry.payload;
+        entry.payloadHex = bytesToHex(payloadBytes);
+        entry.payloadString = tryDecodeString(payloadBytes);
+      }
+    } catch (e) {
+      // Not base64, store as plain text
+      entry.payloadText = entry.payload;
+    }
+  }
+
   messageLogs.unshift(entry);
   if (messageLogs.length > MAX_LOGS) {
     messageLogs.pop();
