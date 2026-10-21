@@ -7,34 +7,15 @@ import { defaultCalibration, type Calibration } from "../eq/calibration.ts";
 import { getLevelsFrame, gainRawToDb } from "../protocol/control.ts";
 import { thresholdRawToDb, samplesToMs, rawToQ, peqIndexToHz } from "../protocol/blocks.ts";
 import { levelsFromReply, reconstructPresetImage, parsePresetImage } from "../protocol/readback.ts";
-import { makeChannels, defaultChannel, OUT_BASE, DEFAULT_BAND_FREQS, type Channel } from "./model.ts";
+import { makeChannels, defaultChannel, OUT_BASE, DEFAULT_BAND_FREQS, type Channel } from "./device-model.ts";
 import { deviceManager } from "./device-manager.ts";
-import { websocketManager } from "./websocket-manager.ts";
 import presetManager from "./preset-manager.ts";
 
 const DEFAULTS_KEY = "opendsp-defaults";
 
 export type DeviceRole = 'master' | 'slave';
 
-// WebSocket URLs for multiple servers - stored in localStorage
-function loadWebSocketUrls(): string[] {
-  try {
-    const saved = localStorage.getItem("opendsp-ws-urls");
-    if (saved) return JSON.parse(saved);
-  } catch (e) {}
-  return [];
-}
-
-function saveWebSocketUrls(urls: string[]): void {
-  try {
-    localStorage.setItem("opendsp-ws-urls", JSON.stringify(urls));
-  } catch (e) {}
-}
-
-// Store for WebSocket URLs
-let webSocketUrls = $state<string[]>(loadWebSocketUrls());
-
-export class DeviceStore {
+export class Device {
   connected = $state(false);
   productName = $state("");
   version = $state("");
@@ -51,10 +32,6 @@ export class DeviceStore {
   deviceGuid?: string; // Unique GUID of this DSP device
 
   currentPresetId = $state<string | null>(null); // GUID of the currently loaded preset from localStorage
-
-  get webSocketUrls(): string[] {
-    return webSocketUrls;
-  }
 
   private dsp: Dsp | null = null;
   private cal: Calibration = defaultCalibration;
@@ -74,179 +51,39 @@ export class DeviceStore {
   /** Collapse the open node → all-collapsed patch-board overview. */
   collapse(): void { this.selected = -1; }
 
-  /** Connect via WebSocket to remote DSP servers only.
-   *  Attempts to connect to configured URLs in order until one succeeds. */
-  async connect(url?: string): Promise<void> {
-    if (!WebSocketTransport.supported()) {
-      this.error = "WebSocket unavailable";
-      return;
-    }
-
-    // Use provided URL or try all configured URLs
-    const urlsToTry = url ? [url] : webSocketUrls;
-
-    for (const serverUrl of urlsToTry) {
-      try {
-        // Fetch server info and devices from the server before connecting
-        let serverGuid: string | undefined;
-        let availableDevices: Array<{id: string, deviceGuid: string, publishedId: string}> = [];
-        try {
-          const httpUrl = serverUrl.replace(/^ws/, 'http');
-          const res = await fetch(`${httpUrl}/server-info`);
-          if (res.ok) {
-            const data = await res.json();
-            serverGuid = data.serverId;
-          }
-          // Also fetch devices list to get available device GUIDs
-          const devicesRes = await fetch(`${httpUrl}/devices`);
-          if (devicesRes.ok) {
-            const devicesData = await devicesRes.json();
-            availableDevices = devicesData.devices || [];
-          }
-        } catch (e) {
-          console.warn(`Could not fetch server info from ${serverUrl}:`, e);
-        }
-
-        // Check if there are any devices available
-        if (availableDevices.length === 0) {
-          this.error = "No DSP devices connected to server. Please connect a device or enable mock mode.";
-          console.log(`Server ${serverUrl} has no devices available`);
-          continue; // Try next URL
-        }
-
-        const t = new WebSocketTransport(serverUrl.trim());
-        this.serverGuid = serverGuid;
-        await this._bind(t, availableDevices);
-        console.log(`Connected to server: ${serverUrl} (GUID: ${serverGuid || 'N/A'})`);
-        return;
-      } catch (e) {
-        console.log(`Failed to connect to ${serverUrl}: ${(e as Error).message}`);
-        // Continue to next URL
-      }
-    }
-    this.error = "No available servers. Ensure WebSocket servers are running.";
-  }
-
-  /** Auto-connect to configured WebSocket URLs on page load. */
-  async autoConnect(): Promise<void> {
-    if (!WebSocketTransport.supported()) {
-      this.error = "WebSocket unavailable";
-      return;
-    }
-
-    // Try to connect to all configured URLs until one succeeds
-    for (const url of webSocketUrls) {
-      try {
-        // Pre-fetch device info for this URL
-        let availableDevices: Array<{id: string, deviceGuid: string, publishedId: string}> = [];
-        try {
-          const httpUrl = url.replace(/^ws/, 'http');
-          const res = await fetch(`${httpUrl}/devices`);
-          if (res.ok) {
-            const data = await res.json();
-            availableDevices = data.devices || [];
-          }
-        } catch (e) {
-          console.warn(`Could not fetch devices from ${url}:`, e);
-        }
-
-        // Check if there are any devices available
-        if (availableDevices.length === 0) {
-          console.log(`Server ${url} has no devices available`);
-          continue; // Try next URL
-        }
-
-        await this._bind(new WebSocketTransport(url.trim()), availableDevices);
-        console.log(`Auto-connected to: ${url}`);
-        return;
-      } catch (e) {
-        console.log(`Auto-connect failed to ${url}: ${(e as Error).message}`);
-      }
-    }
-    this.error = "No available servers";
-  }
-
-  private async _bind(t: WebSocketTransport, availableDevices?: Array<{id: string, deviceGuid: string, publishedId: string}>): Promise<void> {
-    await t.open();
-
-    // Subscribe to all devices after WebSocket connection is established
-    this.subscribeToAllDevices(t);
-
-    this.dsp = new Dsp(t);
-    this.version = await this.dsp.getVersion(); // self-wakes (0x10 then 0x13)
-    this.productName = t.productName || "DSP 4x4 (remote)";
-    this.connected = true;
-    this.error = "";
-
-    // Use deviceGuid from transport if available (set via 'subscribed' message)
-    if (t.deviceGuid) {
-      this.deviceGuid = t.deviceGuid;
-    } else {
-      // Fallback: try to find a matching device in the devices list
-      const httpUrl = t.url.replace(/^ws:/, 'http:');
-      try {
-        const res = await fetch(`${httpUrl}/devices`);
-        if (res.ok) {
-          const data = await res.json();
-          // Find the first subscribed or available device
-          const device = (data.devices || []).find((d: any) => d.subscribed === true);
-          if (device?.deviceGuid) {
-            this.deviceGuid = device.deviceGuid;
-            console.log(`Found device GUID via devices list: ${device.deviceGuid}`);
-          }
-        }
-      } catch (e) {
-        console.warn('Could not fetch device info:', e);
-      }
-    }
-
-    try { await this.hydrate(); } catch { /* readback is best-effort; UI keeps defaults */ }
-    this.startMeters();
-
-    // Register with DeviceManager
-    deviceManager.connect(this, {
-      url: t.url,
-      productName: this.productName
-    }, 'websocket', this.serverGuid, this.deviceGuid);
-
-    // Save connection state to localStorage
-    this.saveConnectionState();
-    deviceManager.saveConnectionState();
-  }
-
   /**
    * Send subscription action to bridge.js server
    */
-  private subscribeToAllDevices(t: WebSocketTransport): void {
-    if (t.isOpen && t.ws) {
-      const msg = JSON.stringify({ type: 'action', action: 'subscribe_all' });
-      try {
-        t.ws.send(msg);
-        console.log('Sent subscribe_all action to bridge.js server');
-      } catch (e) {
-        console.warn('Failed to send subscription message:', e);
-      }
-    } else {
-      // If not open yet, wait for open event
-      const checkAndSubscribe = () => {
-        if (t.isOpen && t.ws) {
-          const msg = JSON.stringify({ type: 'action', action: 'subscribe_all' });
-          try {
-            t.ws.send(msg);
-            console.log('Sent subscribe_all action to bridge.js server');
-          } catch (e) {
-            console.warn('Failed to send subscription message:', e);
-          }
-        }
-      };
-      setTimeout(checkAndSubscribe, 100);
-    }
-  }
+  // private subscribeToAllDevices(t: WebSocketTransport): void {
+  //   if (t.isOpen && t.ws) {
+  //     const msg = JSON.stringify({ type: 'action', action: 'subscribe_all' });
+  //     try {
+  //       t.ws.send(msg);
+  //       console.log('Sent subscribe_all action to bridge.js server');
+  //     } catch (e) {
+  //       console.warn('Failed to send subscription message:', e);
+  //     }
+  //   } else {
+  //     // If not open yet, wait for open event
+  //     const checkAndSubscribe = () => {
+  //       if (t.isOpen && t.ws) {
+  //         const msg = JSON.stringify({ type: 'action', action: 'subscribe_all' });
+  //         try {
+  //           t.ws.send(msg);
+  //           console.log('Sent subscribe_all action to bridge.js server');
+  //         } catch (e) {
+  //           console.warn('Failed to send subscription message:', e);
+  //         }
+  //       }
+  //     };
+  //     setTimeout(checkAndSubscribe, 100);
+  //   }
+  // }
 
   /** Public version of _bind for direct transport attachment (e.g., multi-device scenarios) */
-  async bind(t: WebSocketTransport): Promise<void> {
-    await this._bind(t);
-  }
+  // async bind(t: WebSocketTransport): Promise<void> {
+  //   await this._bind(t);
+  // }
 
   /** Read the 9 channel-state pages on connect → mirror preset name, channel names, gains. */
   private async hydrate(): Promise<void> {
@@ -293,41 +130,41 @@ export class DeviceStore {
   }
 
   /** DEBUG: dump the live channel-state records as hex (full records, to diff Out1 vs Out2). */
-  async _dumpRecords(): Promise<Record<string, string>> {
-    if (!this.dsp) return {};
-    const pages: Uint8Array[] = [];
-    for (let i = 0; i < 9; i++) { const d = await this.dsp.channelState(i); pages[d[0] ?? i] = d.slice(1, 51); }
-    const img = reconstructPresetImage(pages);
-    const hex = (o: number, n: number) => Array.from(img.slice(o, o + n), (b) => b.toString(16).padStart(2, "0")).join(" ");
-    const out: Record<string, string> = {};
-    [112, 186, 260, 334].forEach((b, i) => { const h = hex(b, 74); out[`OUT${i + 1}`] = h; console.log(`OUT${i + 1} @${b}: ${h}`); });
-    [16, 40, 64, 88].forEach((b, i) => { const h = hex(b, 24); out[`IN${"ABCD"[i]}`] = h; console.log(`IN${"ABCD"[i]} @${b}: ${h}`); });
-    return out;
-  }
+  // async _dumpRecords(): Promise<Record<string, string>> {
+  //   if (!this.dsp) return {};
+  //   const pages: Uint8Array[] = [];
+  //   for (let i = 0; i < 9; i++) { const d = await this.dsp.channelState(i); pages[d[0] ?? i] = d.slice(1, 51); }
+  //   const img = reconstructPresetImage(pages);
+  //   const hex = (o: number, n: number) => Array.from(img.slice(o, o + n), (b) => b.toString(16).padStart(2, "0")).join(" ");
+  //   const out: Record<string, string> = {};
+  //   [112, 186, 260, 334].forEach((b, i) => { const h = hex(b, 74); out[`OUT${i + 1}`] = h; console.log(`OUT${i + 1} @${b}: ${h}`); });
+  //   [16, 40, 64, 88].forEach((b, i) => { const h = hex(b, 24); out[`IN${"ABCD"[i]}`] = h; console.log(`IN${"ABCD"[i]} @${b}: ${h}`); });
+  //   return out;
+  // }
 
   /** Poll the device's 8 I/O levels (~10 Hz) into channel meters. */
-  private startMeters(): void {
-    this.stopMeters();
-    let busy = false; // skip a tick if the previous poll hasn't replied — avoids piling up the transport
-    // Meter smoothing: alpha for exponential moving average (0.3 = 30% new value, 70% old)
-    const METER_SMOOTHING = 0.3;
-    this.meterTimer = setInterval(() => {
-      if (!this.dsp || busy) return;
-      busy = true;
-      void this.dsp.send(getLevelsFrame()).then((r) => {
-        const lv = levelsFromReply(r);
-        if (lv) for (let i = 0; i < 8; i++) {
-          // Smooth meter values to prevent jumpy display
-          const currentMeter = this.ch(i).meter;
-          const newMeter = lv[i]!;
-          // Only apply smoothing if we have a valid previous value
-          this.ch(i).meter = currentMeter === 0 && newMeter < 0.05 ? newMeter :
-            currentMeter + METER_SMOOTHING * (newMeter - currentMeter);
-        }
-      }).catch(() => {}).finally(() => { busy = false; });
-    }, 100);
-  }
-  private stopMeters(): void { if (this.meterTimer) { clearInterval(this.meterTimer); this.meterTimer = undefined; } }
+  // private startMeters(): void {
+  //   this.stopMeters();
+  //   let busy = false; // skip a tick if the previous poll hasn't replied — avoids piling up the transport
+  //   // Meter smoothing: alpha for exponential moving average (0.3 = 30% new value, 70% old)
+  //   const METER_SMOOTHING = 0.3;
+  //   this.meterTimer = setInterval(() => {
+  //     if (!this.dsp || busy) return;
+  //     busy = true;
+  //     void this.dsp.send(getLevelsFrame()).then((r) => {
+  //       const lv = levelsFromReply(r);
+  //       if (lv) for (let i = 0; i < 8; i++) {
+  //         // Smooth meter values to prevent jumpy display
+  //         const currentMeter = this.ch(i).meter;
+  //         const newMeter = lv[i]!;
+  //         // Only apply smoothing if we have a valid previous value
+  //         this.ch(i).meter = currentMeter === 0 && newMeter < 0.05 ? newMeter :
+  //           currentMeter + METER_SMOOTHING * (newMeter - currentMeter);
+  //       }
+  //     }).catch(() => {}).finally(() => { busy = false; });
+  //   }, 100);
+  // }
+  // private stopMeters(): void { if (this.meterTimer) { clearInterval(this.meterTimer); this.meterTimer = undefined; } }
 
   /** Debounce by key; coalesces rapid changes (e.g. a fader/EQ drag) into one send. */
   private commit(key: string, fn: () => void, delay = 40): void {
@@ -1022,7 +859,4 @@ export class DeviceStore {
 }
 
 // Export the singleton instance
-export const device = new DeviceStore();
-
-// Export for backward compatibility - single device mode still works
-export { deviceManager } from "./device-manager.ts";
+export const device = new Device();

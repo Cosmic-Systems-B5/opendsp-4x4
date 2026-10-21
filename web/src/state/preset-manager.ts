@@ -1,6 +1,6 @@
 // Preset manager for JSON save/load system
 
-import type {Channel} from "./model.ts";
+import type {Channel} from "./device-model.ts";
 
 const PRESET_VERSION = "1.0";
 const DEFAULT_PRESET_NAME = "Untitled preset";

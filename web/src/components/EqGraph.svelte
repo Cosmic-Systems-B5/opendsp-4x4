@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { device } from "../state/device.svelte.ts";
-  import { DEFAULT_BAND_FREQS } from "../state/model.ts";
+  import { device } from "../state/device.ts";
+  import { DEFAULT_BAND_FREQS } from "../state/device-model.ts";
 
   import { logFreqAxis, summedResponseDb } from "../eq/response.ts";
   import { makeScales } from "../eq/scales.ts";

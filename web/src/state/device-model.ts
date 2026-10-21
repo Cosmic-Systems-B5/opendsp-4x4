@@ -22,8 +22,6 @@ export interface Channel {
   eqMode?: "peq" | "geq"; // EQ display mode: PEQ controls or GEQ graph
 }
 
-export interface PresetSlot { slot: number; name: string; }
-
 export const OUT_BASE = 0x04;
 const IN_NAMES = ["In A", "In B", "In C", "In D"];
 const OUT_NAMES = ["Out 1", "Out 2", "Out 3", "Out 4"];
@@ -31,6 +29,7 @@ const OUT_NAMES = ["Out 1", "Out 2", "Out 3", "Out 4"];
 export function defaultBand(freqHz = 1000): PeqBand {
   return { freqHz, gainDb: 0, bwOct: 1, type: PeqType.PEAK, bypass: true };
 }
+
 // Sensible per-band default centre frequencies (used for new channels + dbl-click reset).
 export const DEFAULT_BAND_FREQS = [60, 150, 400, 1000, 2500, 6000, 12000];
 

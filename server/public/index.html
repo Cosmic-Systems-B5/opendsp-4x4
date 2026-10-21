@@ -52,12 +52,10 @@
         code { background: var(--bg-alt); padding: .05rem .3rem; border-radius: 3px;
             color: var(--text); }
 
-        /* ---------- status colours ---------- */
         .status-ok   { color: var(--good-fg); }
         .status-warn { color: var(--warn-fg); }
         .status-err  { color: var(--err-fg); }
 
-        /* ---------- server-id badge ---------- */
         .server-id {
             display: inline-block;
             background: var(--panel-2);
@@ -70,7 +68,6 @@
             letter-spacing: .04em;
         }
 
-        /* ---------- click-to-copy ---------- */
         .copy {
             position: relative;
             display: inline-flex;
@@ -89,19 +86,11 @@
         }
         .copy:hover { color: var(--text); border-color: var(--accent); }
         .copy:active { background: var(--panel); }
-        .copy.copied {
-            color: var(--good-fg);
-            border-color: var(--good);
-        }
-        .copy .icon {
-            opacity: .6;
-            font-size: .8em;
-            line-height: 1;
-        }
+        .copy.copied { color: var(--good-fg); border-color: var(--good); }
+        .copy .icon { opacity: .6; font-size: .8em; line-height: 1; }
         .copy:hover .icon { opacity: 1; }
         .copy.copied .icon { opacity: 1; }
 
-        /* ---------- bars ---------- */
         .bar {
             display: flex;
             align-items: center;
@@ -116,7 +105,6 @@
         .bar .sep { flex: 1; }
         .hint { color: var(--text-faint); font-style: italic; font-size: .76rem; }
 
-        /* ---------- buttons ---------- */
         button {
             padding: .28rem .65rem;
             font-size: .76rem;
@@ -132,28 +120,13 @@
         button:active { background: var(--panel); }
         button:disabled { opacity: .45; cursor: default; }
 
-        button.good {
-            background: transparent;
-            color: var(--good-fg);
-            border-color: var(--good);
-        }
+        button.good { background: transparent; color: var(--good-fg); border-color: var(--good); }
         button.good:hover { background: rgba(107,143,122,.1); }
-
-        button.bad {
-            background: transparent;
-            color: var(--err-fg);
-            border-color: var(--err);
-        }
-        button.bad:hover { background: rgba(156,95,95,.1); }
-
-        button.secondary {
-            background: transparent;
-            color: var(--text-dim);
-            border-color: var(--line);
-        }
+        button.bad  { background: transparent; color: var(--err-fg);  border-color: var(--err); }
+        button.bad:hover  { background: rgba(156,95,95,.1); }
+        button.secondary { background: transparent; color: var(--text-dim); border-color: var(--line); }
         button.secondary:hover { color: var(--text); }
 
-        /* ---------- pills ---------- */
         .pill {
             display: inline-block;
             padding: 0 .38rem;
@@ -172,7 +145,6 @@
         .pill.mock  { color: #a08cc4; border-color: #4a3f5e; background: rgba(90,70,120,.15); }
         .pill.sub   { color: var(--good-fg); border-color: var(--good); background: rgba(107,143,122,.1); }
 
-        /* ---------- device grid ---------- */
         .device-grid {
             display: grid;
             gap: .5rem;
@@ -235,7 +207,6 @@
             border-top: 1px solid var(--line-soft);
         }
 
-        /* ---------- routing matrix ---------- */
         .matrix {
             display: grid;
             grid-template-columns: 24px repeat(4, 1fr);
@@ -251,23 +222,10 @@
             min-height: 16px;
             color: var(--text-dim);
         }
-        .matrix .hdr {
-            color: var(--text-dim);
-            font-weight: 600;
-            letter-spacing: .04em;
-        }
-        .matrix .lbl {
-            color: var(--text-faint);
-            text-align: right;
-            padding-right: 4px;
-        }
-        .matrix .on {
-            background: rgba(107,143,122,.22);
-            color: var(--good-fg);
-            font-weight: 700;
-        }
+        .matrix .hdr { color: var(--text-dim); font-weight: 600; letter-spacing: .04em; }
+        .matrix .lbl { color: var(--text-faint); text-align: right; padding-right: 4px; }
+        .matrix .on  { background: rgba(107,143,122,.22); color: var(--good-fg); font-weight: 700; }
 
-        /* ---------- channel chips ---------- */
         .chans {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
@@ -295,7 +253,6 @@
             font-size: .76rem;
         }
 
-        /* ---------- message log ---------- */
         #msgs-scroll { max-height: 320px; overflow: auto; }
         .msg-entry {
             display: grid;
@@ -309,6 +266,7 @@
             font-size: .71rem;
             font-family: var(--mono);
             border-left: 2px solid transparent;
+            cursor: pointer;
         }
         .msg-entry.inbound  { border-left-color: #3a5a4a; }
         .msg-entry.outbound { border-left-color: #3a4a5e; }
@@ -331,6 +289,34 @@
             color: var(--text-faint);
             margin-right: .3rem;
         }
+        /* FIX: expanded rows need to wrap instead of ellipsizing. */
+        .msg-entry.expanded .summary {
+            white-space: pre-wrap;
+            word-break: break-all;
+            overflow: visible;
+            text-overflow: clip;
+        }
+
+        /* FIX: style for the connection-log rows that the original HTML
+           rendered with class .log-entry / .http / .ws but never styled. */
+        .log-entry {
+            display: grid;
+            grid-template-columns: auto 4rem 1fr;
+            gap: .4rem;
+            padding: .18rem .5rem;
+            margin-bottom: 1px;
+            background: var(--bg-alt);
+            border-radius: 3px;
+            font-size: .71rem;
+            font-family: var(--mono);
+        }
+        .log-entry .ts { color: var(--text-faint); }
+        .log-entry .m  { color: var(--text-dim); text-transform: uppercase; font-size: .62rem; }
+        .log-entry .p  { color: var(--text); overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; }
+        .log-entry.http .m { color: #8fa5c4; }
+        .log-entry.ws   .m { color: #a08cc4; }
+        #logs-scroll { max-height: 220px; overflow: auto; }
     </style>
 </head>
 <body>
@@ -341,14 +327,14 @@
     <span>Status: <span id="status">…</span></span>
     <span class="sep"></span>
     <span class="copy" id="ws-copy" title="Click to copy">
-    <span class="icon">⧉</span>
-    <span id="ws-url" class="mono">ws://…</span>
-  </span>
+        <span class="icon">⧉</span>
+        <span id="ws-url" class="mono">ws://…</span>
+    </span>
 </div>
 
 <div class="bar">
-  <span>Devices: <b id="dev-count">0</b>
-     (<span id="hid-count">0</span> HID, <span id="mock-count">0</span> mock)</span>
+    <span>Devices: <b id="dev-count">0</b>
+       (<span id="hid-count">0</span> HID, <span id="mock-count">0</span> mock)</span>
     <span>Mock: <b id="mock-state">…</b></span>
     <span class="sep"></span>
     <button id="add-mock" class="good">+ Add mock</button>
@@ -394,7 +380,11 @@
             try {
                 const info = await (await fetch('/server-info')).json();
                 $('server-id').textContent = info.serverId;
-                $('ws-url').textContent = `ws://${info.host}:${info.port}`;
+                // FIX: backend now reports actual bound host; if it is not
+                // 127.0.0.1, connect from the browser via window.location
+                // (the WS URL shown is what *other* clients should use).
+                const host = info.host || location.hostname;
+                $('ws-url').textContent = `ws://${host}:${info.port}`;
                 $('mock-state').textContent = info.mockMode ? 'ON' : 'OFF';
             } catch (e) { console.error(e); }
         }
@@ -402,8 +392,8 @@
         async function loadStatus() {
             try {
                 const s = await (await fetch('/status')).json();
-                $('dev-count').textContent = s.deviceCount;
-                $('hid-count').textContent = s.hidCount;
+                $('dev-count').textContent  = s.deviceCount;
+                $('hid-count').textContent  = s.hidCount;
                 $('mock-count').textContent = s.mockCount;
                 const el = $('status');
                 if (s.deviceCount === 0) el.innerHTML = '<span class="status-err">no devices</span>';
@@ -418,12 +408,16 @@
                 const el = $('logs');
                 if (!logs.length) { el.innerHTML = '<div class="empty">—</div>'; return; }
                 el.innerHTML = logs.slice(0, 200).map(l => {
+                    // FIX: connectionLogs entries use .type ('http_request'),
+                    // .method, .path; there is no separate WS type in the
+                    // current backend, so classify by presence of method.
                     const cls = l.type === 'http_request' ? 'http' : 'ws';
+                    const method = l.method || l.type || '';
                     return `<div class="log-entry ${cls}">
-           <span class="ts">${esc(l.timestamp)}</span>
-           <span class="m">${esc(l.method || l.type)}</span>
-           <span class="p">${esc(l.path || '')}</span>
-         </div>`;
+                        <span class="ts">${esc((l.timestamp || '').slice(11, 23))}</span>
+                        <span class="m">${esc(method)}</span>
+                        <span class="p" title="${esc(l.path || '')}">${esc(l.path || '')}</span>
+                    </div>`;
                 }).join('');
             } catch (e) { console.error(e); }
         }
@@ -433,11 +427,13 @@
         // ----------------------------------------------------------------
         const TRUNC = 120;
 
-        function summarize(entry) {
-            const s = entry.summary?.text ?? '';
-            const kind = entry.summary?.kind ?? 'none';
-            const short = s.length > TRUNC ? s.slice(0, TRUNC) + '…' : s;
-            return { kind, short, full: s };
+        // FIX: single definition (original had two; the second overwrote the
+        // first and made loadMessages call renderMessages twice per tick).
+        async function loadMessages() {
+            try {
+                const logs = await (await fetch('/logs/messages')).json();
+                renderMessages(logs);
+            } catch (e) { console.error(e); }
         }
 
         function renderMessages(logs) {
@@ -452,64 +448,53 @@
                     kind === 'json' ? 'JSON' :
                         kind === 'hex'  ? 'HEX'  :
                             kind === 'text' ? 'TXT'  : '';
+                // FIX: put the full text on the element so the click handler
+                // can expand it. The original referenced row.dataset.full
+                // which was never written.
                 return `
-        <div class="msg-entry ${esc(l.direction)}">
-          <span class="ts">${esc((l.timestamp || '').slice(11, 23))}</span>
-          <span class="dev" title="${esc(l.publishedId || l.deviceId || '')}">${esc(dev)}</span>
-          <span class="dir">${esc(l.direction || '')}</span>
-          <span class="summary ${esc(kind)}"
-                data-prefix="${esc(prefix)}"
-                title="${esc(full.length > TRUNC ? full : '')}">${esc(short)}</span>
-        </div>`;
+                    <div class="msg-entry ${esc(l.direction || '')}"
+                         data-full="${esc(full)}">
+                        <span class="ts">${esc((l.timestamp || '').slice(11, 23))}</span>
+                        <span class="dev" title="${esc(l.publishedId || l.deviceId || '')}">${esc(dev)}</span>
+                        <span class="dir">${esc(l.direction || '')}</span>
+                        <span class="summary ${esc(kind)}"
+                              data-prefix="${esc(prefix)}"
+                              title="${esc(full)}">${esc(short)}</span>
+                    </div>`;
             }).join('');
         }
 
-        async function loadMessages() {
-            try {
-                const logs = await (await fetch('/logs/messages')).json();
-                renderMessages(logs);
-            } catch (e) { console.error(e); }
-        }
-
+        // FIX: one clear handler (was bound twice) and it now resets the
+        // poll target so the next 2s tick doesn't immediately repopulate.
+        let msgsClearedAt = 0;
         $('clear-msgs').onclick = () => {
             $('msgs').innerHTML = '<div class="empty">—</div>';
+            msgsClearedAt = Date.now();
         };
-        async function loadMessages() {
-            try {
-                const logs = await (await fetch('/logs/messages')).json();
-                renderMessages(logs);
-            } catch (e) { console.error(e); }
-        }
 
-        // Toggle expand on click
+        // FIX: expand/collapse reads from data-full on the row.
         $('msgs').addEventListener('click', (e) => {
             const row = e.target.closest('.msg-entry');
             if (!row) return;
-            row.classList.toggle('expanded');
             const summary = row.querySelector('.summary');
+            if (!summary) return;
             const full = row.dataset.full || '';
+            row.classList.toggle('expanded');
             if (row.classList.contains('expanded')) {
                 summary.textContent = full;
             } else {
-                const short = full.length > TRUNC ? full.slice(0, TRUNC) + '…' : full;
-                summary.textContent = short;
+                summary.textContent = full.length > TRUNC ? full.slice(0, TRUNC) + '…' : full;
             }
         });
-
-        $('clear-msgs').onclick = () => {
-            $('msgs').innerHTML = '<div class="empty">—</div>';
-        };
 
         // ----------------------------------------------------------------
         // Click-to-copy on the WS address
         // ----------------------------------------------------------------
         async function copyText(text) {
-            // Try the async Clipboard API first (requires secure context or localhost)
             if (navigator.clipboard && window.isSecureContext) {
                 try { await navigator.clipboard.writeText(text); return true; }
-                catch { /* fall through to legacy path */ }
+                catch { /* fall through */ }
             }
-            // Legacy fallback: hidden textarea + execCommand
             try {
                 const ta = document.createElement('textarea');
                 ta.value = text;
@@ -522,9 +507,7 @@
                 const ok = document.execCommand('copy');
                 document.body.removeChild(ta);
                 return ok;
-            } catch {
-                return false;
-            }
+            } catch { return false; }
         }
 
         function flashCopied(el, ok) {
@@ -567,9 +550,15 @@
                     render();
                 } else if (msg.type === 'subscribed') {
                     subscriptions.add(msg.deviceId);
+                    if (typeof msg.subscriberCount === 'number') {
+                        setSubscriberCount(msg.deviceId, msg.subscriberCount);
+                    }
                     render();
                 } else if (msg.type === 'unsubscribed') {
                     subscriptions.delete(msg.deviceId);
+                    if (typeof msg.subscriberCount === 'number') {
+                        setSubscriberCount(msg.deviceId, msg.subscriberCount);
+                    }
                     render();
                 } else if (msg.type === 'device_gone') {
                     subscriptions.delete(msg.deviceId);
@@ -579,11 +568,19 @@
                 } else if (msg.type === 'settings_update') {
                     settings.set(msg.deviceId, { channels: msg.channels, routing: msg.routing });
                     render();
+                } else if (msg.type === 'error') {
+                    console.warn('bridge error:', msg.code, msg.message || '');
                 }
             };
 
             ws.onclose = () => setTimeout(connect, 1500);
             ws.onerror = (e) => console.error('WS error:', e);
+        }
+
+        function setSubscriberCount(deviceId, n) {
+            const d = devices.get(deviceId);
+            if (!d) return;
+            devices.set(deviceId, { ...d, subscriberCount: n });
         }
 
         // ----------------------------------------------------------------
@@ -595,7 +592,15 @@
                 grid.innerHTML = '<div class="empty">No devices yet…</div>';
                 return;
             }
-            grid.innerHTML = [...devices.keys()].map(buildCard).join('');
+            // FIX: preserve DOM order by sorting — Map iteration order is
+            // insertion order, which fluctuates as SSE merges new devices.
+            const ids = [...devices.keys()].sort((a, b) => {
+                const A = devices.get(a), B = devices.get(b);
+                // mocks after hids, then by slot/id
+                if (A.kind !== B.kind) return A.kind === 'hid' ? -1 : 1;
+                return String(a).localeCompare(String(b), undefined, { numeric: true });
+            });
+            grid.innerHTML = ids.map(buildCard).join('');
         }
 
         function buildCard(id) {
@@ -625,37 +630,37 @@
             if (st?.channels?.length) {
                 chans = '<div class="chans">' + st.channels.slice(0, 8).map((ch, i) =>
                     `<div class="ch ${ch.mute ? 'mute' : ''}">
-           <span>${i + 1}</span>
-           <span class="v">${ch.gainDb?.toFixed(0) ?? '-'}dB</span>
-         </div>`).join('') + '</div>';
+                        <span>${i + 1}</span>
+                        <span class="v">${ch.gainDb?.toFixed?.(0) ?? (ch.gainDb ?? '-')}dB</span>
+                    </div>`).join('') + '</div>';
             }
 
             return `
-      <div class="device-card ${subscribed ? 'subscribed' : ''}" data-device-id="${esc(id)}">
-        <header>
-          <span class="name" title="${esc(d.product)}">${esc(d.product || id)}</span>
-          <span>${kindPill} ${subPill}</span>
-        </header>
-        <div class="meta">
-          <div>id <b>${esc(d.publishedId || '—')}</b></div>
-          <div>slot <b>${esc(id)}</b></div>
-          <div>subs <b>${d.subscriberCount ?? 0}</b></div>
-        </div>
-        <div class="body">
-          ${routing}
-          ${chans}
-        </div>
-        <div class="buttons">
-          ${subscribed
+                <div class="device-card ${subscribed ? 'subscribed' : ''}" data-device-id="${esc(id)}">
+                    <header>
+                        <span class="name" title="${esc(d.product || id)}">${esc(d.product || id)}</span>
+                        <span>${kindPill} ${subPill}</span>
+                    </header>
+                    <div class="meta">
+                        <div>id <b>${esc(d.publishedId || '—')}</b></div>
+                        <div>slot <b>${esc(id)}</b></div>
+                        <div>subs <b>${d.subscriberCount ?? 0}</b></div>
+                    </div>
+                    <div class="body">
+                        ${routing}
+                        ${chans}
+                    </div>
+                    <div class="buttons">
+                        ${subscribed
                 ? `<button class="secondary" data-action="unsub" data-id="${esc(id)}">Unsub</button>`
                 : `<button class="good"     data-action="sub"   data-id="${esc(id)}">Sub</button>`}
-          ${isMock
+                        ${isMock
                 ? `<button class="bad" style="margin-left:auto"
-                       data-action="remove" data-id="${esc(id)}"
-                       title="Remove this mock device">×</button>`
+                                   data-action="remove" data-id="${esc(id)}"
+                                   title="Remove this mock device">×</button>`
                 : ''}
-        </div>
-      </div>`;
+                    </div>
+                </div>`;
         }
 
         // ----------------------------------------------------------------
@@ -666,8 +671,11 @@
             const { action, id } = btn.dataset;
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-            if (action === 'sub')   return ws.send(JSON.stringify({ type: 'action', action: 'subscribe',   deviceId: id }));
+            if (action === 'sub') {
+                return ws.send(JSON.stringify({ type: 'action', action: 'subscribe', deviceId: id }));
+            }
             if (action === 'unsub') {
+                // Optimistic UI: the server will confirm with 'unsubscribed'.
                 subscriptions.delete(id);
                 render();
                 return ws.send(JSON.stringify({ type: 'action', action: 'unsubscribe', deviceId: id }));
@@ -677,7 +685,7 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ remove: id }),
-                }).then(loadStatus);
+                }).then(loadStatus).catch(console.error);
                 return;
             }
         });
@@ -688,45 +696,58 @@
             ws.send(JSON.stringify({ type: 'action', action: 'unsubscribe_all' }));
 
         $('add-mock').onclick = async () => {
-            const res = await fetch('/mock', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ add: true }),
-            });
-            if (res.ok) {
-                const data = await res.json();
-                console.log('Added', data.publishedId);
-                loadStatus();
-            }
+            try {
+                const res = await fetch('/mock', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ add: true }),
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    console.log('Added', data.publishedId);
+                    loadStatus();
+                }
+            } catch (e) { console.error(e); }
         };
 
         $('remove-all-mock').onclick = async () => {
-            const res = await fetch('/mock', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ remove: true }),
-            });
-            if (res.ok) {
-                const { removedCount } = await res.json();
-                console.log(`Removed ${removedCount} mock device(s)`);
-                loadStatus();
-            }
+            try {
+                const res = await fetch('/mock', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ remove: true }),
+                });
+                if (res.ok) {
+                    const { removedCount } = await res.json();
+                    console.log(`Removed ${removedCount} mock device(s)`);
+                    loadStatus();
+                }
+            } catch (e) { console.error(e); }
         };
 
+        // FIX: track mock state locally instead of scraping text content,
+        // which was fragile across concurrent updates.
+        let mockOn = false;
         $('toggle-mock').onclick = async () => {
-            const on = $('mock-state').textContent === 'ON';
-            const res = await fetch('/mock', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ enable: !on }),
-            });
-            if (res.ok) {
-                $('mock-state').textContent = on ? 'OFF' : 'ON';
-                loadStatus();
-            }
+            try {
+                const res = await fetch('/mock', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enable: !mockOn }),
+                });
+                if (res.ok) {
+                    mockOn = !mockOn;
+                    $('mock-state').textContent = mockOn ? 'ON' : 'OFF';
+                    loadStatus();
+                }
+            } catch (e) { console.error(e); }
         };
 
-        $('clear-logs').onclick = () => { $('logs').innerHTML = '<div class="empty">—</div>'; };
+        $('clear-logs').onclick = () => {
+            $('logs').innerHTML = '<div class="empty">—</div>';
+            logsClearedAt = Date.now();
+        };
+        let logsClearedAt = 0;
 
         // ----------------------------------------------------------------
         // SSE: device list
@@ -744,18 +765,35 @@
                 render();
             } catch (err) { console.error(err); }
         };
+        devEs.onerror = () => {
+            // EventSource auto-reconnects; just note it.
+            console.warn('devices SSE error (will retry)');
+        };
 
         // ----------------------------------------------------------------
         // Boot
         // ----------------------------------------------------------------
-        loadServerInfo();
+        // FIX: seed mockOn from server-info once so the toggle button agrees
+        // with reality after a page reload.
+        (async () => {
+            await loadServerInfo();
+            mockOn = ($('mock-state').textContent === 'ON');
+        })();
+
         loadStatus();
         loadLogs();
         loadMessages();
         connect();
+
         setInterval(loadStatus, 5000);
-        setInterval(loadLogs, 5000);
-        setInterval(loadMessages, 2000);
+        setInterval(() => {
+            // FIX: skip poll if the user just cleared; avoids the "clear
+            // button doesn't work" flicker in the original.
+            if (Date.now() - logsClearedAt > 8000) loadLogs();
+        }, 5000);
+        setInterval(() => {
+            if (Date.now() - msgsClearedAt > 8000) loadMessages();
+        }, 2000);
     })();
 </script>
 </body>

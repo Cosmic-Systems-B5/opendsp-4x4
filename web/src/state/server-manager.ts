@@ -37,6 +37,29 @@ class WebSocketManagerState {
   private connections: Map<string, { transport: WebSocketTransport; server: ServerConnection }> = new Map();
   private nextId = 0;
 
+// // WebSocket URLs for multiple servers - stored in localStorage
+//   function loadWebSocketUrls(): string[] {
+//     try {
+//       const saved = localStorage.getItem("opendsp-ws-urls");
+//       if (saved) return JSON.parse(saved);
+//     } catch (e) {}
+//     return [];
+//   }
+//
+//   function saveWebSocketUrls(urls: string[]): void {
+//     try {
+//       localStorage.setItem("opendsp-ws-urls", JSON.stringify(urls));
+//     } catch (e) {}
+//   }
+//
+// // Store for WebSocket URLs
+//   let webSocketUrls = $state<string[]>(loadWebSocketUrls());
+
+
+  // get webSocketUrls(): string[] {
+  //   return webSocketUrls;
+  // }
+
   /**
    * Get all active server connections (reactive list)
    */
@@ -70,6 +93,7 @@ class WebSocketManagerState {
       const httpUrl = url.replace(/^ws/, 'http');
       const res = await fetch(`${httpUrl}/server-info`);
       if (res.ok) {
+        console.log("fetchServerInfo", res.json())
         return await res.json();
       }
     } catch (e) {
@@ -86,6 +110,7 @@ class WebSocketManagerState {
       const httpUrl = url.replace(/^ws/, 'http');
       const res = await fetch(`${httpUrl}/devices`);
       if (res.ok) {
+        console.log("fetchDevices", res.json())
         const data = await res.json();
         return data.devices || [];
       }
@@ -167,4 +192,4 @@ class WebSocketManagerState {
   }
 }
 
-export const websocketManager = new WebSocketManagerState();
+export const serverManager = new WebSocketManagerState();

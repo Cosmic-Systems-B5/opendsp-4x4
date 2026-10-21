@@ -1,6 +1,6 @@
 <script lang="ts">
   // Single output tuning panel with all controls visible
-  import { device } from "../state/device.svelte.ts";
+  import { device } from "../state/device.ts";
   import ChannelHeader from "./ChannelHeader.svelte";
   import EqPanel from "./EqPanel.svelte";
 

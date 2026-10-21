@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { device, deviceManager } from "../state/device.svelte.ts";
-  import { websocketManager } from "../state/websocket-manager.ts";
+  import { device, deviceManager } from "../state/device.ts";
+  import { serverManager } from "../state/server-manager.ts";
 
   let remoteUrls = $state<Array<string>>([]);
   let connectingTo = $state<string | null>(null);
@@ -10,7 +10,7 @@
   $effect(() => {
     remoteUrls = device.webSocketUrls;
     // Update connection states whenever connections change
-    connectionStates = websocketManager.getConnectionStates();
+    connectionStates = serverManager.getConnectionStates();
   });
 
   /**
@@ -38,12 +38,12 @@
         serverGuid = 'srv-' + Math.random().toString(36).substring(2, 7).toUpperCase();
       }
 
-      // Connect via websocketManager which handles the transport
+      // Connect via serverManager which handles the transport
       const productName = "DSP 4x4 (remote)";
-      await websocketManager.connect(url, productName);
+      await serverManager.connect(url, productName);
 
-      // Get the transport from websocketManager and bind to device
-      const t = websocketManager.getTransport(url);
+      // Get the transport from serverManager and bind to device
+      const t = serverManager.getTransport(url);
       if (!t) throw new Error("Failed to get WebSocket transport");
 
       await device.bind(t);
@@ -62,7 +62,7 @@
   }
 
   function disconnectServer(url: string) {
-    websocketManager.disconnect(url);
+    serverManager.disconnect(url);
     deviceManager.disconnectServer(url);
   }
 
@@ -151,66 +151,66 @@
   </div>
   </div>
 
-<div class="device-picker">
-    <div class="panel-content">
-    <!-- Connected DSP Devices table (original style) -->
-    <h4>Connected DSP Units ({deviceManager.devices.filter(d => d.connected).length} connected, {deviceManager.devices.length - deviceManager.devices.filter(d => d.connected).length} saved)</h4>
-    <div class="device-list">
-      {#if deviceManager.devices.length > 0}
-        <table class="device-table">
-          <thead>
-          <tr>
-            <th>Status</th>
-            <th>Role</th>
-            <th>Product Name</th>
-            <th>Server GUID</th>
-            <th>Device GUID</th>
-            <th>Action</th>
-          </tr>
-          </thead>
-          <tbody>
-          {#each deviceManager.devices as dev (dev.id)}
-            <tr class:master={dev.role === 'master'} class:slave={dev.role === 'slave'} class:disconnected={!dev.connected}>
-              <td class="status-cell">
-                {#if dev.connected}
-                  <span class="dot ok"></span>
-                {:else}
-                  <span class="dot disconnected" title="Device saved for reconnection"></span>
-                {/if}
-              </td>
-              <td>
-                    <span class="role-badge" class:role-master={dev.role === 'master'} class:role-slave={dev.role === 'slave'}>
-                      {#if dev.role === 'master'}M{:else}S{/if}
-                    </span>
-                {#if dev.role === 'master'}<span class="role-label">Master</span>{/if}
-              </td>
-              <td class="product">{dev.connectionInfo.productName}</td>
-              <td class="guid-cell" title="Server GUID">{dev.serverGuid ?? 'N/A'}</td>
-              <td class="guid-cell" title="Device GUID">{dev.deviceGuid ?? 'N/A'}</td>
-              <td class="action">
-                {#if dev.connected}
-                  {#if dev.role === 'master'}
-                    <button class="btn-link disconnect-master" onclick={() => disconnectDSP(dev.id)}>
-                      Disconnect (Promotes Slave)
-                    </button>
-                  {:else}
-                    <button class="btn-link" onclick={() => disconnectDSP(dev.id)}>Disconnect</button>
-                  {/if}
-                {:else}
-                  <button class="btn-link reconnect-btn" onclick={() => reconnectDSP(dev.id)}>Reconnect</button>
-                  <button class="btn-link remove-btn-small" onclick={() => removeSavedDevice(dev.id)}>Remove</button>
-                {/if}
-              </td>
-            </tr>
-          {/each}
-          </tbody>
-        </table>
-      {:else}
-        <p class="no-devices">No DSP units connected. Connect to a server and connect to a DSP unit.</p>
-      {/if}
-    </div>
-    </div>
-</div>
+<!--<div class="device-picker">-->
+<!--    <div class="panel-content">-->
+<!--    &lt;!&ndash; Connected DSP Devices table (original style) &ndash;&gt;-->
+<!--    <h4>Connected DSP Units ({deviceManager.devices.filter(d => d.connected).length} connected, {deviceManager.devices.length - deviceManager.devices.filter(d => d.connected).length} saved)</h4>-->
+<!--    <div class="device-list">-->
+<!--      {#if deviceManager.devices.length > 0}-->
+<!--        <table class="device-table">-->
+<!--          <thead>-->
+<!--          <tr>-->
+<!--            <th>Status</th>-->
+<!--            <th>Role</th>-->
+<!--            <th>Product Name</th>-->
+<!--            <th>Server GUID</th>-->
+<!--            <th>Device GUID</th>-->
+<!--            <th>Action</th>-->
+<!--          </tr>-->
+<!--          </thead>-->
+<!--          <tbody>-->
+<!--          {#each deviceManager.devices as dev (dev.id)}-->
+<!--            <tr class:master={dev.role === 'master'} class:slave={dev.role === 'slave'} class:disconnected={!dev.connected}>-->
+<!--              <td class="status-cell">-->
+<!--                {#if dev.connected}-->
+<!--                  <span class="dot ok"></span>-->
+<!--                {:else}-->
+<!--                  <span class="dot disconnected" title="Device saved for reconnection"></span>-->
+<!--                {/if}-->
+<!--              </td>-->
+<!--              <td>-->
+<!--                    <span class="role-badge" class:role-master={dev.role === 'master'} class:role-slave={dev.role === 'slave'}>-->
+<!--                      {#if dev.role === 'master'}M{:else}S{/if}-->
+<!--                    </span>-->
+<!--                {#if dev.role === 'master'}<span class="role-label">Master</span>{/if}-->
+<!--              </td>-->
+<!--              <td class="product">{dev.connectionInfo.productName}</td>-->
+<!--              <td class="guid-cell" title="Server GUID">{dev.serverGuid ?? 'N/A'}</td>-->
+<!--              <td class="guid-cell" title="Device GUID">{dev.deviceGuid ?? 'N/A'}</td>-->
+<!--              <td class="action">-->
+<!--                {#if dev.connected}-->
+<!--                  {#if dev.role === 'master'}-->
+<!--                    <button class="btn-link disconnect-master" onclick={() => disconnectDSP(dev.id)}>-->
+<!--                      Disconnect (Promotes Slave)-->
+<!--                    </button>-->
+<!--                  {:else}-->
+<!--                    <button class="btn-link" onclick={() => disconnectDSP(dev.id)}>Disconnect</button>-->
+<!--                  {/if}-->
+<!--                {:else}-->
+<!--                  <button class="btn-link reconnect-btn" onclick={() => reconnectDSP(dev.id)}>Reconnect</button>-->
+<!--                  <button class="btn-link remove-btn-small" onclick={() => removeSavedDevice(dev.id)}>Remove</button>-->
+<!--                {/if}-->
+<!--              </td>-->
+<!--            </tr>-->
+<!--          {/each}-->
+<!--          </tbody>-->
+<!--        </table>-->
+<!--      {:else}-->
+<!--        <p class="no-devices">No DSP units connected. Connect to a server and connect to a DSP unit.</p>-->
+<!--      {/if}-->
+<!--    </div>-->
+<!--    </div>-->
+<!--</div>-->
 
     <!-- Summary bar -->
 <!--    <div class="summary">-->

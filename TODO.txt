@@ -1,4 +1,4 @@
-[x] web ui: Split the websocket management out of the state/device.svelte.ts and state/device-manager.ts into a new state/websocket-manager.ts
+[x] web ui: Split the websocket management out of the state/device-store.ts and state/device-manager.ts into a new state/server-manager.ts
 [x] web ui: fix the websocket connection ui so the connection status updates in real time
 [x] server: Update to add a unique GUID for each connected DSP unit
 [x] web ui: Ensure multiple similar DSP units can be connected by using the server guid and the DSP guid to make a unique reference for each DSP unit

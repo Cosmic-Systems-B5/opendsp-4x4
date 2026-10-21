@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { device } from "../state/device.svelte.ts";
+  import { device } from "../state/device.ts";
   import Meter from "./Meter.svelte";
   let { index }: { index: number; } = $props();
   const ch = $derived(device.ch(index));

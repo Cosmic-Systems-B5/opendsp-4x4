@@ -2,8 +2,8 @@
 // First connected DSP becomes the master - all settings are read from it.
 // Subsequent DSPs become slaves and receive master's setup and any changes.
 
-import { device as defaultDevice } from "./device.svelte.ts";
-import type { Channel } from "./model.ts";
+import { device as defaultDevice } from "./device.ts";
+import type { Channel } from "./device-model.ts";
 
 export type DeviceRole = 'master' | 'slave';
 

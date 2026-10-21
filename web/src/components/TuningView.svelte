@@ -1,7 +1,7 @@
 <script lang="ts">
   // Tuning view: shows Out 1-3 with gain, EQ, LPF, HPF, and Delay sections always visible
-  import { device } from "../state/device.svelte.ts";
-  import { OUT_BASE } from "../state/model.ts";
+  import { device } from "../state/device.ts";
+  import { OUT_BASE } from "../state/device-model.ts";
   import OutputTuning from "./OutputTuning.svelte";
 
   // Show outputs 1, 2, 3 (indices 4, 5, 6)
