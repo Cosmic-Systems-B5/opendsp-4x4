@@ -1,5 +1,3 @@
-[ ] web ui: Reninstate the CSS styles for the device table.
-[ ] web ui: Remove all USB connection code from all the state code
 [ ] web ui: Split the websocket management out of the state/device.svelte.ts and state/device-manager.ts into a new state/websocket-manager.ts
 [ ] web ui: fix the websocket connection ui so the connection status updates in real time
 [ ] server: Update to add a unique GUID for each connected DSP unit
@@ -8,4 +6,5 @@
 [ ] web ui: Don't remove DSP units when disconnecting so they can be reconnected whenever required.
 [ ] web ui: Store both server and DSP connection state in the local storage and on page reload reconnect and restore the state.
 [ ] server: in mock mode it sends an initial DSP device state.
-[ ] server: when in mock mode it has a real time updated display of the mock DSP settings that are being sent from the web ui to test for succesfull control using a copy of the tuning page, but add the routing matric as well
+[ ] server: add a real time updated display of the actual local DSP settings (both real and mock modes) using a copy of the tuning page with the routing matrix added
+[ ] server: change the connection log to a full featured send / receive message log with message content debugging and display of both hex data and string data

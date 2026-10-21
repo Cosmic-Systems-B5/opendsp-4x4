@@ -127,8 +127,7 @@ export class DeviceStore {
     this.startMeters();
 
     // Register with DeviceManager
-    const transportType: 'websocket' = 'websocket';
-    deviceManager.connect(this, transportType, {
+    deviceManager.connect(this, {
       url: t.url,
       productName: this.productName
     });

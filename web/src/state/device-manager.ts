@@ -11,10 +11,8 @@ export interface ConnectedDevice {
   id: string;
   store: typeof defaultDevice;
   role: DeviceRole;
-  transportType: 'usb' | 'websocket';
   connectionInfo: {
-    path?: string;
-    url?: string;
+    url: string;
     productName: string;
     serialNumber?: string;
   };
@@ -96,13 +94,10 @@ class DeviceManagerState {
     return [...this.servers];
   }
 
-  connect(deviceStore: typeof defaultDevice, transportType: 'usb' | 'websocket', connectionInfo: ConnectedDevice['connectionInfo']): void {
-    // Check if a device with the same path/url is already connected (prevents duplicate connections)
+  connect(deviceStore: typeof defaultDevice, connectionInfo: ConnectedDevice['connectionInfo']): void {
+    // Check if a device with the same URL is already connected (prevents duplicate connections)
     for (const existing of this.devices) {
-      const isNewPath = transportType === 'usb' && existing.connectionInfo.path === connectionInfo.path;
-      const isNewUrl = transportType === 'websocket' && existing.connectionInfo.url === connectionInfo.url;
-
-      if (isNewPath || isNewUrl) {
+      if (existing.connectionInfo.url === connectionInfo.url) {
         console.warn(`Device ${connectionInfo.productName} is already connected (${existing.id})`);
         return; // Don't add duplicate
       }
@@ -111,10 +106,9 @@ class DeviceManagerState {
     const role = this.devices.length === 0 ? 'master' : 'slave';
 
     const connectedDevice: ConnectedDevice = {
-      id: `${transportType}-${this.nextId++}`,
+      id: `ws-${this.nextId++}`,
       store: deviceStore,
       role,
-      transportType,
       connectionInfo
     };
 

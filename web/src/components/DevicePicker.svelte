@@ -217,6 +217,34 @@
   .secondary-btn { background: var(--bg-panel); color: var(--text); border: 1px solid var(--line); }
   .disconnect-btn { background: #dc2626; color: white; }
 
+  /* Device list table */
+  .device-list { overflow-x: auto; margin-top: .5rem; }
+
+  .device-table { width: 100%; border-collapse: collapse; font-size: .85rem; margin-bottom: 0.5rem; }
+  .device-table th { text-align: left; padding: .4rem .6rem; background: var(--bg-elev); color: var(--text-dim);
+                     font-weight: 500; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  .device-table td { padding: .5rem .6rem; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  .device-table tr:last-child td { border-bottom: none; }
+
+  .master { background: rgba(0, 255, 0, 0.08); }
+  .slave { background: rgba(0, 0, 255, 0.06); }
+
+  .status-cell { text-align: center; white-space: nowrap; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block;
+         background: var(--good); box-shadow: 0 0 6px var(--good); }
+
+  .role-badge { display: inline-flex; align-items: center; justify-content: center;
+                width: 24px; height: 24px; border-radius: 4px; font-size: .75rem; font-weight: 600; white-space: nowrap; }
+  .role-master { background: #d0f0d0; color: #1a5c1a; }
+  .role-slave { background: #d0d8f0; color: #1a235c; }
+
+  .role-label { margin-left: 6px; font-size: .7rem; color: var(--text-dim); }
+  .product { font-weight: 500; color: var(--text); }
+  .server-ip { font-family: monospace; color: var(--text-dim); font-size: .75rem; word-break: break-all; }
+
+  .btn-link { background: none; border: none; color: #f66; cursor: pointer; font-size: .8rem; padding: 0; }
+  .btn-link:hover { text-decoration: underline; }
+
   /* Summary bar */
   .no-devices { color: var(--text-dim); font-style: italic; text-align: center; padding: 1rem; }
   .summary { display: flex; gap: 1.5rem; padding: 0.75rem; border-top: 1px solid var(--line);
