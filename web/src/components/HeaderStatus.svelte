@@ -37,57 +37,68 @@
   }
 </script>
 
-{#if message}
-  <div class={`header-status header-status-${confirm ? 'info' : msgType} ${confirm ? 'confirm' : ''}`}>
-    <span class="message">{message}</span>
-    {#if confirm}
-      <div class="confirm-buttons">
-        <button class="btn-confirm" onclick={handleConfirm}>OK</button>
-        <button class="btn-cancel" onclick={handleCancel}>Cancel</button>
-      </div>
-    {:else}
-      <button class="close-btn" aria-label="Close message" onclick={handleClose}>×</button>
-    {/if}
-  </div>
-{/if}
+<div class="header-status-bar">
+  {#if message}
+    <div class={`header-status-content header-status-${confirm ? 'info' : msgType} ${confirm ? 'confirm' : ''}`}>
+      <span class="message">{message}</span>
+      {#if confirm}
+        <div class="confirm-buttons">
+          <button class="btn-confirm" onclick={handleConfirm}>OK</button>
+          <button class="btn-cancel" onclick={handleCancel}>Cancel</button>
+        </div>
+      {:else}
+        <button class="close-btn" aria-label="Close message" onclick={handleClose}>×</button>
+      {/if}
+    </div>
+  {:else}
+    <span class="placeholder">Ready</span>
+  {/if}
+</div>
 
 <style>
-  .header-status {
+  .header-status-bar {
     width: calc(100% - 2rem);
     max-width: 900px;
-    margin: 0 auto 0.75rem;
-    padding: 0.75rem 1.5rem;
-    border-radius: var(--radius);
-    font-weight: 500;
+    margin: 0 auto;
+    min-height: 3rem;
     display: flex;
     align-items: center;
-    gap: 1rem;
+    padding: 0.75rem 1.5rem;
+    border-radius: var(--radius);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    animation: slideDown 0.3s ease-out;
+    transition: all 0.3s ease-out;
   }
 
-  .header-status.success {
+  .header-status-bar.success {
     background: #dcfce7;
     color: #166534;
     border: 1px solid #86efac;
   }
 
-  .header-status.error {
+  .header-status-bar.error {
     background: #fee2e2;
     color: #991b1b;
     border: 1px solid #fca5a5;
   }
 
-  .header-status.info,
-  .header-status.confirm {
+  .header-status-bar.info,
+  .header-status-bar.confirm {
     background: #eff6ff;
     color: #1e40af;
     border: 1px solid #bfdbfe;
   }
 
+  .header-status-content {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
   .message {
     flex: 1;
     font-size: 0.9rem;
+    font-weight: 500;
   }
 
   .close-btn {
@@ -145,21 +156,16 @@
     background: #d1d5db;
   }
 
-  @keyframes slideDown {
-    from {
-      opacity: 0;
-      transform: translateY(-1rem);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+  .placeholder {
+    font-size: 0.9rem;
+    color: var(--text-dim);
+    opacity: 0.7;
   }
 
   @media (max-width: 600px) {
-    .header-status {
+    .header-status-bar {
       width: calc(100% - 2rem);
-      margin: 0.5rem 1rem 0.75rem;
+      margin: 0.5rem 1rem;
       padding: 0.6rem 1rem;
     }
   }

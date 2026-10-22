@@ -87,8 +87,6 @@
   });
 </script>
 
-<HeaderStatus message={flashMessage?.text || ''} type={flashMessage?.type || 'info'} confirm={!!flashMessage?.confirm} />
-
 <header class="top">
   <strong>cosmicDSP-4x4</strong>
   <div class="view-toggle">
@@ -98,6 +96,8 @@
   </div>
   <span class="spacer"></span>
 </header>
+
+<HeaderStatus message={flashMessage?.text || ''} type={flashMessage?.type || 'info'} confirm={!!flashMessage?.confirm} />
 
 {#if viewMode === "routing"}
   <PatchBoard />
@@ -126,8 +126,6 @@
   .status { font-size: .82rem; color: var(--text-dim); max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .status.ok { color: var(--good); }
   .warn-box { margin: .6rem 1rem; background: #4a2b00; color: #ffd9a0; padding: .55rem .8rem; border-radius: var(--radius); }
-  /* HeaderStatus component styling */
-  .header-status { margin-top: -0.5rem; }
   .agpl { padding: 1rem; border-top: 1px solid var(--line); font-size: .72rem; text-align: center; margin-top: auto; }
   .agpl a { color: var(--accent); }
 </style>
