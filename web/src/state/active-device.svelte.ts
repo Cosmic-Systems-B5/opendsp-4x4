@@ -1,32 +1,33 @@
 // Reactive selector for "the DeviceSvelte that the UI should render".
 //
-// - When a remote server has been bound and one of its DSP units is master,
-//   this returns that store (a live DeviceSvelte whose dsp is wired to the
-//   bridge transport).
-// - Otherwise it returns the module-level `device` singleton, so single-device
-//   USB workflows keep working unchanged.
+// Returns the local device store. In the peer-to-peer architecture,
+// all devices are equal peers, and each has its own local data model.
+// Components can use this to get a consistent reference to the device
+// they should be editing.
+//
+// - For USB-connected devices: returns the module-level `device` singleton.
+// - For remote WebSocket connections: also returns `device` (the active
+//   connection is tracked via deviceManager, but there's no master/slave).
 //
 // Components should import `active` and read it via `$derived` or directly:
 //   <input bind:value={active.channels[i].gainDb} oninput={...}>
 //   function onInput(e) { active.setGainDb(i, +e.target.value); }
 
 import { device } from "./device.svelte.ts";
-import { deviceManager } from "./device-manager.svelte.ts";
 
 /**
  * The store the UI should render and mutate. Reactive — a `$derived` in a
- * component will re-run when the master changes.
+ * component will re-run when device state changes.
  */
 export function activeDevice(): typeof device {
-    const master = deviceManager.master;
-    return master ?? device;
+    return device;
 }
 
 /**
- * Non-reactive getter for imperative call sites (event handlers). Reads the
- * current master at call time. Use this inside `function onX() { … }`
+ * Non-reactive getter for imperative call sites (event handlers). Returns
+ * the current device reference at call time. Use this inside `function onX() { … }`
  * bodies; use `activeDevice()` inside `$derived`/template expressions.
  */
 export function activeNow(): typeof device {
-    return deviceManager.master ?? device;
+    return device;
 }

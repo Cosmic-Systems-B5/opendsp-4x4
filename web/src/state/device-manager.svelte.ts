@@ -1,5 +1,5 @@
-// Multi-DSP Device Manager with master/slave support.
-// First connected DSP becomes the master; slaves mirror the master.
+// Multi-DSP Device Manager - peer-to-peer architecture
+// All DSP units are peers; the UI local data model is the single source of truth.
 //
 // A `.svelte.ts` module so `$state` works at the module level. Importers must
 // use `device-manager.svelte.ts` (with extension) in Svelte 5 + Vite unless
@@ -9,12 +9,9 @@ import { device as defaultDevice } from "./device.svelte.ts";
 import type { Channel } from "./device-model.ts";
 import type { WebSocketTransport } from "../transport/websocket.ts";
 
-export type DeviceRole = 'master' | 'slave';
-
 export interface ConnectedDevice {
   id: string;
   store: typeof defaultDevice;
-  role: DeviceRole;
   transportType: 'usb' | 'websocket';
   transport?: WebSocketTransport;
   connectionInfo: {
@@ -67,12 +64,7 @@ class DeviceManagerState {
   servers: ServerConnection[] = [];
   nextId = 0;
 
-  get master(): typeof defaultDevice | undefined {
-    return this.devices.find(d => d.role === 'master' && d.connected)?.store;
-  }
-  get slaveCount(): number {
-    return this.devices.filter(d => d.role === 'slave' && d.connected).length;
-  }
+  // Get all connected devices
   get connectedDevices(): ConnectedDevice[] {
     return this.devices.filter(d => d.connected);
   }
@@ -100,14 +92,9 @@ class DeviceManagerState {
     );
     if (existing) return existing;
 
-    const role: DeviceRole = this.devices.some(d => d.role === 'master' && d.connected)
-        ? 'slave'
-        : 'master';
-
     const rec: ConnectedDevice = {
       id: `websocket-${this.nextId++}`,
       store: deviceStore,
-      role,
       transportType: 'websocket',
       transport: t,
       connectionInfo: { url: opts.url, productName: opts.productName },
@@ -121,24 +108,15 @@ class DeviceManagerState {
 
     deviceStore.serverGuid = opts.serverGuid;
     deviceStore.deviceGuid = opts.deviceGuid;
-    deviceStore.role = role;
     deviceStore.productName = opts.productName;
 
     this.#recordBinding(rec);
-    this.saveConnectionState();
 
-    // NEW: if this device joined as a slave, mirror the master into it and
-    // push the mirrored state to its hardware. Do it here (not at the call site)
-    // so callers can't forget and so the role is guaranteed to be assigned.
-
-    if (rec.role === 'slave') {
-      const master = this.master;
-      if (master && master !== deviceStore) {
-        void this.applyMasterConfig(deviceStore).catch((e) =>
-            console.warn(`[deviceManager] applyMasterConfig failed for ${rec.id}:`, e)
-        );
-      }
-    }
+    // Send current local data model config to any newly connected device.
+    // This ensures the new device gets the full, up-to-date configuration.
+    void this.sendFullConfigToDevice(deviceStore).catch((e) =>
+        console.warn(`[deviceManager] sendFullConfigToDevice failed for ${rec.id}:`, e)
+    );
 
     return rec;
   }
@@ -165,7 +143,6 @@ class DeviceManagerState {
     }
     this.devices = [...this.devices];
     this.#dropBindingsForServer(url);
-    // this.#promoteIfNeeded();
   }
 
   getServers(): ServerConnection[] { return [...this.servers]; }
@@ -185,20 +162,21 @@ class DeviceManagerState {
         && d.connected);
     if (duplicate) return;
 
-    const role: DeviceRole = this.devices.some(d => d.role === 'master' && d.connected)
-        ? 'slave'
-        : 'master';
-
     this.devices = [...this.devices, {
       id: `${transportType}-${this.nextId++}`,
       store: deviceStore,
-      role,
       transportType,
       connectionInfo,
       serverGuid,
       deviceGuid,
       connected: true,
     }];
+
+    // Send current local data model config to any newly connected USB device.
+    void this.sendFullConfigToDevice(deviceStore).catch((e) =>
+        console.warn(`[deviceManager] sendFullConfigToDevice failed for ${transportType} device:`, e)
+    );
+
     this.saveConnectionState();
   }
 
@@ -208,7 +186,6 @@ class DeviceManagerState {
     rec.connected = false;
     this.#dropBinding(rec);
     this.devices = [...this.devices];
-    // this.#promoteIfNeeded();
     this.saveConnectionState();
   }
 
@@ -217,7 +194,6 @@ class DeviceManagerState {
     if (!rec) return;
     rec.connected = true;
     this.devices = [...this.devices];
-    // this.#promoteIfNeeded();
     this.saveConnectionState();
   }
 
@@ -226,96 +202,97 @@ class DeviceManagerState {
     this.devices = [...this.devices];
   }
 
-  // --- master → slave mirroring ------------------------------------------
+  // --- send full config to device ----------------------------------------
 
   /**
-   * Copy the master's current state into `target` and push it to `target`'s
-   * bound device. Called when a slave joins, and on role promotion.
+   * Send the complete current local data model configuration to a DSP device.
+   * This is called when a device connects and should receive the current state.
    */
-  async applyMasterConfig(target: typeof defaultDevice): Promise<void> {
-    const master = this.master;
-    if (!master || master === target) return;
+  async sendFullConfigToDevice(deviceStore: typeof defaultDevice): Promise<void> {
+    if (!deviceStore.dsp) {
+      console.log('[dm] sendFullConfigToDevice skipped — no dsp');
+      return;
+    }
 
-    await master.ready;
+    await deviceStore.ready;
 
-    console.log('[dm] applyMasterConfig', {
-      target_has_dsp: !!(target as any).dsp,
-      master_channels: master.channels.length,
-      target_channels: target.channels.length,
-      target_role: target.role,
+    console.log('[dm] sendFullConfigToDevice', {
+      deviceId: deviceStore.deviceGuid,
+      channels: deviceStore.channels.length,
     });
 
-    target.channels = master.channels.map(ch => ({
-      index: ch.index,
-      name: ch.name,
-      isOutput: ch.isOutput,
-      gainDb: ch.gainDb,
-      mute: ch.mute,
-      polarity: ch.polarity,
-      meter: ch.meter,
-      eq: ch.eq ? {
-        bands: ch.eq.bands.map(b => ({ ...b })),
-        hpf: { freqHz: ch.eq.hpf.freqHz, slope: ch.eq.hpf.slope },
-        lpf: { freqHz: ch.eq.lpf.freqHz, slope: ch.eq.lpf.slope },
-      } : undefined,
-      delayMs: ch.delayMs,
-      comp: ch.comp ? { ...ch.comp } : undefined,
-      gate: ch.gate ? { ...ch.gate } : undefined,
-      eqMode: ch.eqMode,
-    }));
-    target.routing = [...master.routing];
-    target.eqLink = { ...master.eqLink };
-    target.presetName = master.presetName;
-    target.activePreset = master.activePreset;
+    // Push all channel settings to the device
+    for (let i = 0; i < deviceStore.channels.length; i++) {
+      const ch = deviceStore.channels[i];
+      if (!ch) continue;
+      try {
+        await deviceStore.dsp.setLevelDb(i, ch.gainDb);
+        await deviceStore.dsp.setPolarity(i, ch.polarity);
+        await deviceStore.dsp.mute(i, ch.mute);
 
-    await target.pushAll();
+        if (ch.isOutput) {
+          if (ch.delayMs !== undefined) await deviceStore.dsp.delayMs(i, ch.delayMs);
+          if (ch.comp) await deviceStore.dsp.compressor(i, ch.comp);
+          await deviceStore.dsp.routing(0x04 + i, deviceStore.routing[i]);
+          if (ch.eq) {
+            await deviceStore.dsp.crossoverHpf(i, deviceStore.calibration.xoverHzToRaw(ch.eq.hpf.freqHz), ch.eq.hpf.slope);
+            await deviceStore.dsp.crossoverLpf(i, deviceStore.calibration.xoverHzToRaw(ch.eq.lpf.freqHz), ch.eq.lpf.slope);
+            for (let band = 0; band < ch.eq.bands.length; band++) {
+              const b = ch.eq.bands[band];
+              if (!b) continue;
+              await deviceStore.dsp.peqBand(i, band, {
+                freqHz: b.freqHz,
+                q: deviceStore.calibration.bwOctToQ(b.bwOct, b.freqHz),
+                gainRaw: deviceStore.calibration.peqGainDbToRaw(b.gainDb, b.type),
+                type: b.type,
+                bypass: b.bypass,
+              });
+            }
+          }
+        } else {
+          if (ch.gate) await deviceStore.dsp.gate(i, ch.gate);
+        }
+      } catch (e) {
+        console.warn(`[dm] Failed to push channel ${i} config:`, e);
+      }
+    }
+
+    // Push routing (output 1-4)
+    for (let i = 0; i < deviceStore.routing.length; i++) {
+      try {
+        await deviceStore.dsp.routing(0x04 + i, deviceStore.routing[i]);
+      } catch (e) {
+        console.warn(`[dm] Failed to push routing ${i}:`, e);
+      }
+    }
+
+    // Push preset name and active preset
+    if (deviceStore.presetName) {
+      // Note: SET_NAME command sets the current preset name on device
+    }
+
+    console.log('[dm] sendFullConfigToDevice done');
   }
-
-  // /** Promote the first connected slave to master if no master is active. */
-  // #promoteIfNeeded(): void {
-  //   const hasMaster = this.devices.some(d => d.role === 'master' && d.connected);
-  //   if (hasMaster) return;
-  //   const first = this.devices.find(d => d.connected);
-  //   if (!first) return;
-  //   for (const d of this.devices) {
-  //     d.role = d.id === first.id ? 'master' : 'slave';
-  //     d.store.role = d.role;
-  //   }
-  //   this.devices = [...this.devices];    // ← NEW: trigger reactivity for activeDevice()
-  //   // Strict: bring the promoted master's device in line with what the UI
-  //   // already shows, and reapply its config to the remaining slaves.
-  //   void first.store.pushAll().catch(() => {});
-  //   for (const d of this.devices) {
-  //     if (d.id !== first.id && d.connected) {
-  //       void this.applyMasterConfig(d.store).catch(() => {});
-  //     }
-  //   }
-  // }
 
   // --- live broadcast (state mirror + per-field hardware push) -----------
 
-// ---------------------------------------------------------------------------
-// Live broadcast: mirror master → slave stores, AND push the same values to
-// each slave's bound device via `store.dsp` directly.
-//
-// IMPORTANT: these must NOT call the store's public setters (setGainDb,
-// setMute, etc.) — those call commit(), which calls broadcastToSlaves(),
-// which would re-enter this method. Calling `store.dsp.<cmd>()` directly
-// sends the write without any local rebroadcast.
-// ---------------------------------------------------------------------------
-
+  /**
+   * Broadcast a channel update to all connected DSP devices.
+   * The change originated from the UI local model, so we push to all devices
+   * including the one that may have triggered the change (for redundancy).
+   */
   broadcastChannelUpdate(channelIndex: number, updates: Partial<Channel>): void {
-    if (!this.master || this.slaveCount === 0) return;
+    if (this.connectedDevices.length === 0) return;
     for (const device of this.devices) {
-      if (device.role !== 'slave' || !device.connected) continue;
+      if (!device.connected) continue;
       const ch = device.store.channels[channelIndex];
       if (!ch) continue;
 
-      // 1) Mirror to the slave's reactive store (UI).
+      // Mirror to the device's store
       Object.assign(ch, updates);
       device.store.channels = [...device.store.channels];
 
-      // 2) Push to the slave's hardware via dsp directly (bypasses commit()).
+      // Push to the hardware via dsp directly (bypasses commit()).
       const dsp = device.store.dsp;
       if (!dsp) continue;
       (async () => {
@@ -332,17 +309,17 @@ class DeviceManagerState {
   }
 
   broadcastRoutingUpdate(outIndex: number, mask: number): void {
-    if (!this.master || this.slaveCount === 0) return;
+    if (this.connectedDevices.length === 0) return;
     for (const device of this.devices) {
-      if (device.role !== 'slave' || !device.connected) continue;
+      if (!device.connected) continue;
       const i = outIndex - 0x04;
       if (i < 0 || i >= device.store.routing.length) continue;
 
-      // 1) Mirror to slave store.
+      // Mirror to store.
       device.store.routing[i] = mask;
       device.store.routing = [...device.store.routing];
 
-      // 2) Push to slave hardware.
+      // Push to hardware.
       const dsp = device.store.dsp;
       if (!dsp) continue;
       void dsp.routing(outIndex, mask).catch(() => {});
@@ -353,27 +330,27 @@ class DeviceManagerState {
     // EQ links are a UI-only concept (they pair two outputs for mirrored
     // editing). There is no wire command for "link EQ", so this is
     // store-only — no dsp push.
-    if (!this.master || this.slaveCount === 0) return;
+    if (this.connectedDevices.length === 0) return;
     for (const device of this.devices) {
-      if (device.role !== 'slave' || !device.connected) continue;
+      if (!device.connected) continue;
       device.store.eqLink = { ...device.store.eqLink, [a]: b, [b]: a };
     }
   }
 
   broadcastEqBandUpdate(channelIndex: number, bandIndex: number, updates: EqBandUpdates): void {
-    if (!this.master || this.slaveCount === 0) return;
+    if (this.connectedDevices.length === 0) return;
     for (const device of this.devices) {
-      if (device.role !== 'slave' || !device.connected) continue;
+      if (!device.connected) continue;
       const ch = device.store.channels[channelIndex];
       const eq = ch?.eq;
       if (!eq || !Array.isArray(eq.bands) || bandIndex >= eq.bands.length) continue;
 
-      // 1) Mirror to slave store.
+      // Mirror to store.
       Object.assign(eq.bands[bandIndex]!, updates);
       device.store.channels = [...device.store.channels];
 
-      // 2) Push to slave hardware. Uses the store's Calibration to convert
-      //    engineering units back to wire values.
+      // Push to hardware. Uses the store's Calibration to convert
+      // engineering units back to wire values.
       const dsp = device.store.dsp;
       if (!dsp) continue;
       const b = eq.bands[bandIndex]!;
@@ -390,17 +367,17 @@ class DeviceManagerState {
   }
 
   broadcastEqCrossoverUpdate(channelIndex: number, type: 'hpf' | 'lpf', updates: any): void {
-    if (!this.master || this.slaveCount === 0) return;
+    if (this.connectedDevices.length === 0) return;
     for (const device of this.devices) {
-      if (device.role !== 'slave' || !device.connected) continue;
+      if (!device.connected) continue;
       const eq = device.store.channels[channelIndex]?.eq;
       if (!eq || !(type in eq)) continue;
 
-      // 1) Mirror to slave store.
+      // Mirror to store.
       Object.assign((eq as any)[type], updates);
       device.store.channels = [...device.store.channels];
 
-      // 2) Push to slave hardware.
+      // Push to hardware.
       const dsp = device.store.dsp;
       const cal = device.store.calibration;
       if (!dsp || !cal) continue;
@@ -411,24 +388,6 @@ class DeviceManagerState {
         void dsp.crossoverLpf(channelIndex, cal.xoverHzToRaw(x.freqHz), x.slope).catch(() => {});
       }
     }
-  }
-
-  /**
-   * Push one field's change to the store's bound device, dispatching to the
-   * correct Dsp method. Called from broadcast* to keep slave hardware in sync
-   * without re-pushing the entire state.
-   */
-  async #pushChannelField(store: typeof defaultDevice, i: number, updates: Partial<Channel>): Promise<void> {
-    const dsp = (store as any).dsp;
-    if (!dsp) return;
-    try {
-      if (typeof updates.gainDb === 'number') await dsp.setLevelDb(i, updates.gainDb);
-      if (typeof updates.mute === 'boolean') await dsp.mute(i, updates.mute);
-      if (typeof updates.polarity === 'boolean') await dsp.setPolarity(i, updates.polarity);
-      if (typeof updates.delayMs === 'number') await dsp.delayMs(i, updates.delayMs);
-      if (updates.comp) await dsp.compressor(i, updates.comp);
-      if (updates.gate) await dsp.gate(i, updates.gate);
-    } catch { /* per-field best-effort */ }
   }
 
   // --- persisted bindings -------------------------------------------------
@@ -504,7 +463,7 @@ class DeviceManagerState {
     try {
       const state = {
         devices: this.devices.map(d => ({
-          id: d.id, role: d.role, transportType: d.transportType,
+          id: d.id, transportType: d.transportType,
           connectionInfo: d.connectionInfo, serverGuid: d.serverGuid,
           deviceGuid: d.deviceGuid, connected: d.connected,
         })),
@@ -523,8 +482,8 @@ class DeviceManagerState {
       if (!raw) return;
       const state = JSON.parse(raw);
       this.devices = (state.devices ?? []).map((d: any) => ({
-        id: d.id, store: defaultDevice, role: d.role as DeviceRole,
-        transportType: d.transportType, connectionInfo: d.connectionInfo,
+        id: d.id, store: defaultDevice, transportType: d.transportType,
+        connectionInfo: d.connectionInfo,
         serverGuid: d.serverGuid, deviceGuid: d.deviceGuid, connected: false,
       }));
       this.servers = state.servers ?? [];

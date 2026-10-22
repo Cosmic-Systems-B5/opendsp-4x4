@@ -1,6 +1,5 @@
 // Transport abstraction: the one seam between the (stack-agnostic) protocol
-// codec and the platform I/O. WebHID implements it for desktop browsers; the
-// Android/desktop-native (Kotlin) build will implement the same contract.
+// codec and the platform I/O
 
 export interface DspTransport {
   readonly isOpen: boolean;

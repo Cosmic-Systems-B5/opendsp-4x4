@@ -24,8 +24,6 @@ function dlog(...args: unknown[]) {
   if (DEV_DEBUG) console.log('%c[dev]', 'color:#a08cc4', ...args);
 }
 
-export type DeviceRole = 'master' | 'slave';
-
 export class DeviceSvelte {
   connected = $state(false);
   productName = $state("");
@@ -38,7 +36,7 @@ export class DeviceSvelte {
   routing = $state<number[]>([0x01, 0x02, 0x04, 0x08]);
   selected = $state(-1);
   eqLink = $state<Record<number, number>>({});
-  role: DeviceRole = 'master';
+
   serverGuid?: string;
   deviceGuid?: string;
   currentPresetId = $state<string | null>(null);
@@ -71,14 +69,6 @@ export class DeviceSvelte {
     return this.channels[index]!;
   }
   collapse(): void { this.selected = -1; }
-
-  private assertMaster(): boolean {
-    if (this.role !== 'master') {
-      console.warn(`[preset] ignoring ${this.role} store — master owns presets`);
-      return false;
-    }
-    return true;
-  }
 
   // --- bridge bind / unbind ---------------------------------------------
 
@@ -121,12 +111,12 @@ export class DeviceSvelte {
     dlog('bind: Dsp created', 'deviceId=' + opts.deviceId);
 
     queueMicrotask(() => {
-      if (this.role === 'master' && this.dsp) {
-        this._ready = this.restoreDeviceState()
-            .catch((e) => console.warn('restoreDeviceState failed:', e))
-            .then(() => this.hydrate())
-            .catch((e) => console.warn('initial hydrate failed:', e));
-      }
+      // Hydrate device state from hardware on connect
+      // This ensures we have the current state from the device as our source of truth
+      this._ready = this.restoreDeviceState()
+          .catch((e) => console.warn('restoreDeviceState failed:', e))
+          .then(() => this.hydrate())
+          .catch((e) => console.warn('initial hydrate failed:', e));
     });
   }
 
@@ -233,7 +223,7 @@ export class DeviceSvelte {
     });
   }
 
-  // --- debounced commit --------------------------------------------------
+  // --- debounced commit -------------------------------------------------
 
   private commit(key: string, fn: () => void, delay = 40): void {
     const prev = this.timers.get(key);
@@ -243,22 +233,21 @@ export class DeviceSvelte {
       if (this.dsp) void Promise.resolve().then(fn).catch(() => {}).finally(() => {
         this.saveDeviceState();
         this.syncCurrentPreset();
-        // No broadcast here — the set* method knows what changed.
       });
     }, delay));
   }
 
-  // --- channel basics ----------------------------------------------------
+  // --- channel basics ---------------------------------------------------
 
   setGainDb(i: number, db: number): void {
     if ((globalThis as any).__devDebug) {
-      console.log('%c[dev]', 'color:#a08cc4', 'setGainDb', i, db, 'role=' + this.role, 'hasDsp=' + (this.dsp !== null));
+      console.log('%c[dev]', 'color:#a08cc4', 'setGainDb', i, db);
     }
     const ch = this.ch(i);
     ch.gainDb = db;
     this.channels = [...this.channels];
     this.commit(`gain${i}`, () => this.dsp!.setLevelDb(i, db));
-    deviceManager.broadcastChannelUpdate(i, { gainDb: db });   // only this field
+    deviceManager.broadcastChannelUpdate(i, { gainDb: db });
   }
   setMute(i: number, on: boolean): void {
     const ch = this.ch(i); ch.mute = on;
@@ -368,7 +357,7 @@ export class DeviceSvelte {
     deviceManager.broadcastEqLinkUpdate(a, -1);
   }
 
-  // --- dynamics / delay / routing ----------------------------------------
+  // --- dynamics / delay / routing ---------------------------------------
 
   setDelayMs(i: number, ms: number): void {
     const ch = this.ch(i); ch.delayMs = ms;
@@ -395,7 +384,7 @@ export class DeviceSvelte {
     deviceManager.broadcastRoutingUpdate(outIndex, mask);
   }
 
-  // --- global ------------------------------------------------------------
+  // --- global -----------------------------------------------------------
 
   async recallPreset(slot: number): Promise<void> {
     if (this.dsp) {
@@ -500,10 +489,9 @@ export class DeviceSvelte {
     }
   }
 
-  // --- presets (JSON) ----------------------------------------------------
+  // --- presets (JSON) ---------------------------------------------------
 
   async savePresetToJson(name?: string): Promise<void> {
-    if (!this.assertMaster()) return;
     const presetData = presetManager.exportCurrentPreset();
     try {
       const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(presetData);
@@ -520,7 +508,6 @@ export class DeviceSvelte {
   }
 
   async loadPresetFromJson(jsonString: string, applyToDevice = false): Promise<void> {
-    if (!this.assertMaster()) return;
     try {
       const parsed = JSON.parse(jsonString);
       presetManager.importPreset(parsed);
@@ -532,7 +519,6 @@ export class DeviceSvelte {
   }
 
   async applyLoadedPreset(preset: any): Promise<void> {
-    if (!this.assertMaster()) return;
     if (!this.dsp) return;
     this.stopMeters();
     try {
@@ -594,7 +580,6 @@ export class DeviceSvelte {
   }
 
   async loadSavedPresetFromStorage(index: number): Promise<void> {
-    if (!this.assertMaster()) return;
     const preset = presetManager.loadPreset(index);
     if (!preset) return;
     this.currentPresetId = preset.id;
@@ -613,7 +598,6 @@ export class DeviceSvelte {
   }
 
   saveCurrentPresetToStorage(name: string): void {
-    if (!this.assertMaster()) return;
     const channelCount = this.channels.length;
     if (channelCount < 8) {
       for (let i = channelCount; i < 8; i++) this.channels = [...this.channels, defaultChannel(i)];
@@ -643,7 +627,6 @@ export class DeviceSvelte {
   }
 
   updateExistingPresetToStorage(name: string, presetId: string): void {
-    if (!this.assertMaster()) return;
     const channelCount = this.channels.length;
     if (channelCount < 8) {
       for (let i = channelCount; i < 8; i++) this.channels = [...this.channels, defaultChannel(i)];
@@ -686,7 +669,6 @@ export class DeviceSvelte {
   }
 
   private syncCurrentPreset(): void {
-    if (!this.assertMaster()) return;
     if (!this.currentPresetId) return;
     // If the tracked preset was deleted from the list, clear the pointer.
     const idx = presetManager.findPresetIndexById(this.currentPresetId);
@@ -705,7 +687,7 @@ export class DeviceSvelte {
   }
 
   deleteCurrentPreset(): boolean {
-    if (!this.assertMaster() || !this.currentPresetId) return false;
+    if (!this.currentPresetId) return false;
     const idx = presetManager.findPresetIndexById(this.currentPresetId);
     if (idx < 0) return false;
     presetManager.deletePreset(idx);
@@ -714,7 +696,6 @@ export class DeviceSvelte {
   }
 
   deletePresetById(id: string): boolean {
-    if (!this.assertMaster()) return false;
     const idx = presetManager.findPresetIndexById(id);
     if (idx < 0) return false;
     presetManager.deletePreset(idx);
@@ -723,7 +704,7 @@ export class DeviceSvelte {
   }
 
   listPresets() {
-    // Read-only; safe for slaves too. The list is global — only writes are guarded.
+    // Read-only; safe for all devices.
     return presetManager.getPresets();
   }
 
@@ -731,10 +712,9 @@ export class DeviceSvelte {
     return presetManager.subscribe(cb);
   }
 
-  // --- meters ------------------------------------------------------------
+  // --- meters -----------------------------------------------------------
 
   private startMeters(): void {
-    if (this.role !== 'master') return;   // slaves don't poll meters
     this.stopMeters();
     let busy = false;
     const METER_SMOOTHING = 0.3;
