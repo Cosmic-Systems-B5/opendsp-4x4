@@ -31,10 +31,14 @@
     window.dispatchEvent(event);
     message = '';
   }
+
+  function handleClose() {
+    message = '';
+  }
 </script>
 
 {#if message}
-  <div class={`flash flash-${confirm ? 'info' : msgType} ${confirm ? 'confirm' : ''}`}>
+  <div class={`header-status header-status-${confirm ? 'info' : msgType} ${confirm ? 'confirm' : ''}`}>
     <span class="message">{message}</span>
     {#if confirm}
       <div class="confirm-buttons">
@@ -42,18 +46,16 @@
         <button class="btn-cancel" onclick={handleCancel}>Cancel</button>
       </div>
     {:else}
-      <button class="close-btn" aria-label="Close message">×</button>
+      <button class="close-btn" aria-label="Close message" onclick={handleClose}>×</button>
     {/if}
   </div>
 {/if}
 
 <style>
-  .flash {
-    position: fixed;
-    top: var(--safe-top, 0);
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 1000;
+  .header-status {
+    width: calc(100% - 2rem);
+    max-width: 900px;
+    margin: 0 auto 0.75rem;
     padding: 0.75rem 1.5rem;
     border-radius: var(--radius);
     font-weight: 500;
@@ -62,23 +64,22 @@
     gap: 1rem;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     animation: slideDown 0.3s ease-out;
-    min-width: 300px;
   }
 
-  .flash.success {
+  .header-status.success {
     background: #dcfce7;
     color: #166534;
     border: 1px solid #86efac;
   }
 
-  .flash.error {
+  .header-status.error {
     background: #fee2e2;
     color: #991b1b;
     border: 1px solid #fca5a5;
   }
 
-  .flash.info,
-  .flash.confirm {
+  .header-status.info,
+  .header-status.confirm {
     background: #eff6ff;
     color: #1e40af;
     border: 1px solid #bfdbfe;
@@ -147,20 +148,18 @@
   @keyframes slideDown {
     from {
       opacity: 0;
-      transform: translate(-50%, -100%);
+      transform: translateY(-1rem);
     }
     to {
       opacity: 1;
-      transform: translate(-50%, 0);
+      transform: translateY(0);
     }
   }
 
   @media (max-width: 600px) {
-    .flash {
-      left: 1rem;
-      right: 1rem;
-      width: auto;
-      transform: none;
+    .header-status {
+      width: calc(100% - 2rem);
+      margin: 0.5rem 1rem 0.75rem;
       padding: 0.6rem 1rem;
     }
   }

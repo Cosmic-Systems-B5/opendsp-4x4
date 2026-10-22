@@ -2,7 +2,7 @@
   import PatchBoard from "./components/PatchBoard.svelte";
   import TuningView from "./components/TuningView.svelte";
   import SystemView from "./components/SystemView.svelte";
-  import FlashMessage from "./components/FlashMessage.svelte";
+  import HeaderStatus from "./components/HeaderStatus.svelte";
 
   // Bridge lifecycle: server restore + device auto-restore. Runs once per
   // page load, independent of which view is mounted. Safe to call multiple
@@ -87,7 +87,7 @@
   });
 </script>
 
-<FlashMessage message={flashMessage?.text || ''} type={flashMessage?.type || 'info'} confirm={!!flashMessage?.confirm} />
+<HeaderStatus message={flashMessage?.text || ''} type={flashMessage?.type || 'info'} confirm={!!flashMessage?.confirm} />
 
 <header class="top">
   <strong>cosmicDSP-4x4</strong>
@@ -126,6 +126,8 @@
   .status { font-size: .82rem; color: var(--text-dim); max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .status.ok { color: var(--good); }
   .warn-box { margin: .6rem 1rem; background: #4a2b00; color: #ffd9a0; padding: .55rem .8rem; border-radius: var(--radius); }
+  /* HeaderStatus component styling */
+  .header-status { margin-top: -0.5rem; }
   .agpl { padding: 1rem; border-top: 1px solid var(--line); font-size: .72rem; text-align: center; margin-top: auto; }
   .agpl a { color: var(--accent); }
 </style>

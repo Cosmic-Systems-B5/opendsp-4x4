@@ -2,7 +2,7 @@ Claude Ignore This File
 
 [ ] Add a rate limiter to the UI so when adjusting settings the DSPs are more responsive and less data is sent over the wire. Always send the last value when mouse button is released. Don't rate limit the entire device config when connecting new DSPs.
 
-[ ] Web UI: UI Feedback: When initially connecting to a dsp device (either first or any subsequent) and is either sending or receiving a full device config pause the UI and show a progress bar while the config data is transferred, but only when sending the batch initial config, not when using the ui to tweak settings. When tweaking settings only send the changes.
+[ ] Web UI: UI Feedback: When initially connecting to a dsp device (either first or any subsequent) and is either sending or receiving a full device config pause the UI and show a progress bar while the config data is transferred when sending or receiving the batch initial config.
 
 [ ] Web UI: UI Feedback: Add a new component that is permanently just below the header that shows a mini badge for each available dsp and shows the ID and also shows a mini progress bar per device to show when UI tweaks are being sent and the ack has returned to show it's now in sync with the local model.
 
