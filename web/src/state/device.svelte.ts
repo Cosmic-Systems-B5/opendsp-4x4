@@ -186,34 +186,41 @@ export class DeviceSvelte {
         'inputs=' + pr.inputs.length, 'outputs=' + pr.outputs.length);
     this.lastReadback = pr;
     this.presetName = pr.presetName;
+
+    // Update input channels
+    const newChannels = [...this.channels];
     pr.inputs.forEach((c, i) => {
-      const ch = this.ch(i);
-      if (c.name) ch.name = c.name;
-      ch.gainDb = gainRawToDb(c.gainRaw);
-      ch.polarity = c.polarity;
-      ch.gate = {
+      if (!newChannels[i]) return;
+      if (c.name) newChannels[i].name = c.name;
+      newChannels[i].gainDb = gainRawToDb(c.gainRaw);
+      newChannels[i].polarity = c.polarity;
+      newChannels[i].gate = {
         attackMs: c.gate.atkRaw,
         releaseMs: c.gate.relRaw,
         holdMs: c.gate.holdRaw,
         thresholdDb: thresholdRawToDb(c.gate.thrRaw),
       };
     });
+
+    // Update output channels
+    const newRouting = [...this.routing];
     pr.outputs.forEach((c, i) => {
-      const ch = this.ch(OUT_BASE + i);
-      if (c.name) ch.name = c.name;
-      ch.gainDb = gainRawToDb(c.gainRaw);
-      ch.polarity = c.polarity;
-      ch.delayMs = samplesToMs(c.delaySamples);
-      this.routing[i] = c.routingMask;
-      ch.comp = {
+      const idx = OUT_BASE + i;
+      if (!newChannels[idx]) return;
+      if (c.name) newChannels[idx].name = c.name;
+      newChannels[idx].gainDb = gainRawToDb(c.gainRaw);
+      newChannels[idx].polarity = c.polarity;
+      newChannels[idx].delayMs = samplesToMs(c.delaySamples);
+      newRouting[i] = c.routingMask;
+      newChannels[idx].comp = {
         ratioIndex: c.comp.ratioIndex, kneeDb: c.comp.kneeRaw,
         attackMs: c.comp.atkRaw, releaseMs: c.comp.relRaw,
         thresholdDb: thresholdRawToDb(c.comp.thrRaw),
       };
-      if (ch.eq) {
-        ch.eq.hpf = { freqHz: this.cal.xoverRawToHz(c.hpfRaw), slope: c.hpfSlope };
-        ch.eq.lpf = { freqHz: this.cal.xoverRawToHz(c.lpfRaw), slope: c.lpfSlope };
-        ch.eq.bands = c.bands.map((bd) => {
+      if (newChannels[idx].eq) {
+        newChannels[idx].eq.hpf = { freqHz: this.cal.xoverRawToHz(c.hpfRaw), slope: c.hpfSlope };
+        newChannels[idx].eq.lpf = { freqHz: this.cal.xoverRawToHz(c.lpfRaw), slope: c.lpfSlope };
+        newChannels[idx].eq.bands = c.bands.map((bd) => {
           const freqHz = peqIndexToHz(bd.freqIdx);
           return {
             freqHz,
@@ -225,6 +232,10 @@ export class DeviceSvelte {
         });
       }
     });
+
+    // Assign back to trigger reactivity
+    this.channels = newChannels;
+    this.routing = newRouting;
   }
 
   // --- debounced commit -------------------------------------------------
