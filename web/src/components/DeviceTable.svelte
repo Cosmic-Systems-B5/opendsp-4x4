@@ -26,7 +26,6 @@
               <span class="dot ok"></span>
             </td>
             <td class="product">{dev.connectionInfo.productName}</td>
-            <td class="type">{dev.transportType.toUpperCase()}</td>
             <td class="id">{dev.id.slice(0, 12)}...</td>
             <td class="action">
               <button class="btn-link" onclick={() => deviceManager.disconnect(dev.id)}>Disconnect</button>

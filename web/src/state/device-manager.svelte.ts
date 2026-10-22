@@ -1,13 +1,12 @@
-// Multi-DSP Device Manager - peer-to-peer architecture
-// All DSP units are peers; the UI local data model is the single source of truth.
+// Multi-DSP Device Manager - peer-to-peer architecture.
+// The canonical UI model (`device`) is the single source of truth. Each DSP
+// unit is a "shadow" DeviceSvelte ('bound' role) that talks to hardware and
+// mirrors into the UI model.
 //
-// A `.svelte.ts` module so `$state` works at the module level. Importers must
-// use `device-manager.svelte.ts` (with extension) in Svelte 5 + Vite unless
-// the Svelte plugin config accepts `.svelte.ts` extensions.
+// A `.svelte.ts` module so `$state` works at the module level.
 
 import { device as defaultDevice } from "../state/device.svelte.ts";
-
-import type { Channel } from "./device-model.ts";
+import { OUT_BASE, type Channel } from "./device-model.ts";
 import type { WebSocketTransport } from "../transport/websocket.ts";
 
 export interface ConnectedDevice {
@@ -16,14 +15,10 @@ export interface ConnectedDevice {
   transport?: WebSocketTransport;
   connectionInfo: {
     url?: string;
-    path?: string;
     productName: string;
-    serialNumber?: string;
   };
-  serverGuid?: string;
-  deviceGuid?: string;
-  publishedId?: string;
-  deviceId?: string;
+  serverid?: string;
+  guid?: string;
   connected: boolean;
 }
 
@@ -32,7 +27,7 @@ export interface ServerConnection {
   url: string;
   productName: string;
   connectedAt: string;
-  serverGuid?: string;
+  serverid?: string;
 }
 
 export interface EqBandUpdates {
@@ -44,16 +39,13 @@ export interface EqBandUpdates {
 }
 
 // --- Persisted device bindings ---------------------------------------------
-// Records which (url, deviceId) pairs the user has bound, so a page refresh
-// can restore them once the server reconnects.
 
 const STORAGE_KEY_BOUND = "opendsp-bound-devices";
 
 export interface PersistedBinding {
-  deviceId: string;
+  guid: string;
+  serverid: string;
   productName: string;
-  deviceGuid: string;
-  publishedId: string;
   kind: 'hid' | 'mock';
 }
 export type PersistedBindings = Record<string, Record<string, PersistedBinding>>;
@@ -63,7 +55,6 @@ class DeviceManagerState {
   servers: ServerConnection[] = [];
   nextId = 0;
 
-  // Get all connected devices
   get connectedDevices(): ConnectedDevice[] {
     return this.devices.filter(d => d.connected);
   }
@@ -75,55 +66,69 @@ class DeviceManagerState {
       deviceStore: typeof defaultDevice,
       opts: {
         url: string;
-        deviceId: string;
-        publishedId: string;
-        deviceGuid: string;
-        serverGuid?: string;
+        guid: string;
+        serverid: string;
         productName: string;
         kind: 'hid' | 'mock';
       },
   ): ConnectedDevice | null {
     const existing = this.devices.find(
-        d => d.connectionInfo.url === opts.url
-            && d.deviceId === opts.deviceId
-            && d.connected,
+        d => d.connectionInfo.url === opts.url && d.guid === opts.guid && d.connected,
     );
     if (existing) return existing;
+
+    // Count BEFORE adding this record: if it's 0, this is the first DSP.
+    const isFirst = this.connectedDevices.length === 0;
 
     const rec: ConnectedDevice = {
       id: `websocket-${this.nextId++}`,
       store: deviceStore,
       transport: t,
       connectionInfo: { url: opts.url, productName: opts.productName },
-      serverGuid: opts.serverGuid,
-      deviceGuid: opts.deviceGuid,
-      publishedId: opts.publishedId,
-      deviceId: opts.deviceId,
+      serverid: opts.serverid,
+      guid: opts.guid,
       connected: true,
     };
     this.devices = [...this.devices, rec];
 
-    deviceStore.serverGuid = opts.serverGuid;
-    deviceStore.deviceGuid = opts.deviceGuid;
+    deviceStore.serverid = opts.serverid;
+    deviceStore.guid = opts.guid;
     deviceStore.productName = opts.productName;
 
-    if (this.devices.length >= 2) {
-      // Send current local data model config to any newly connected device
-      void this.sendFullConfigToDevice(deviceStore).catch((e) =>
-          console.warn(`[deviceManager] sendFullConfigToDevice failed for ${rec.id}:`, e)
-      );
+    if (isFirst) {
+      // First DSP: its hydrated state becomes the canonical UI model.
+      void (async () => {
+        try {
+          await deviceStore.ready;
+          defaultDevice.adoptFrom(deviceStore);
+          defaultDevice.saveDeviceState();
+          console.log('[dm] first DSP connected — UI model hydrated from', opts.guid);
+        } catch (e) {
+          console.warn('[dm] adopt from first DSP failed:', e);
+        }
+      })();
+    } else {
+      // Subsequent DSP: the UI model wins — push it to the new hardware.
+      void (async () => {
+        try {
+          await deviceStore.ready;
+          await this.sendFullConfigToDevice(deviceStore);
+          console.log('[dm] pushed UI model to new DSP', opts.guid);
+        } catch (e) {
+          console.warn('[dm] push UI model to new DSP failed:', e);
+        }
+      })();
     }
 
     this.#recordBinding(rec);
-
     return rec;
   }
 
-  connectServer(url: string, productName: string, serverGuid?: string): ServerConnection | null {
+  connectServer(url: string, productName: string, serverid?: string): ServerConnection | null {
     for (const existing of this.servers) if (existing.url === url) return null;
     const server: ServerConnection = {
       id: `server-${this.nextId++}`,
-      url, productName, serverGuid,
+      url, productName, serverid,
       connectedAt: new Date().toISOString(),
     };
     this.servers.push(server);
@@ -142,38 +147,6 @@ class DeviceManagerState {
     this.devices = [...this.devices];
     this.#dropBindingsForServer(url);
   }
-
-  // getServers(): ServerConnection[] { return [...this.servers]; }
-  //
-  // /** Legacy USB path — no deviceId-aware binding needed. */
-  // connect(
-  //     deviceStore: typeof defaultDevice,
-  //     connectionInfo: ConnectedDevice['connectionInfo'],
-  //     transportType: 'usb' | 'websocket',
-  //     serverGuid?: string,
-  //     deviceGuid?: string,
-  // ): void {
-  //   const duplicate = this.devices.some(d =>
-  //       d.connectionInfo.path === connectionInfo.path
-  //       && d.connectionInfo.url === connectionInfo.url
-  //       && d.connected);
-  //   if (duplicate) return;
-  //
-  //   this.devices = [...this.devices, {
-  //     id: `${transportType}-${this.nextId++}`,
-  //     store: deviceStore,
-  //     connectionInfo,
-  //     serverGuid,
-  //     deviceGuid,
-  //     connected: true,
-  //   }];
-  //
-  //   // USB devices always hydrate from hardware first; they don't receive
-  //   // config from other devices (no master/slave in peer-to-peer).
-  //   // The UI will read the state after hydration completes.
-  //
-  //   this.saveConnectionState();
-  // }
 
   disconnect(id: string): void {
     const rec = this.devices.find(d => d.id === id);
@@ -199,24 +172,34 @@ class DeviceManagerState {
 
   // --- send full config to device ----------------------------------------
 
-  /**
-   * Send the complete current local data model configuration to a DSP device.
-   * This is called when a device connects and should receive the current state.
-   */
   async sendFullConfigToDevice(deviceStore: typeof defaultDevice): Promise<void> {
     if (!deviceStore.dsp) {
       console.log('[dm] sendFullConfigToDevice skipped — no dsp');
       return;
     }
-
     await deviceStore.ready;
 
+    // Copy the canonical UI model into the shadow store first, so the values
+    // we push are the UI's, not whatever the shadow hydrated from hardware.
+    deviceStore.channels = defaultDevice.channels.map(ch => ({
+      ...ch,
+      eq: ch.eq ? {
+        bands: ch.eq.bands.map(b => ({ ...b })),
+        hpf: { ...ch.eq.hpf },
+        lpf: { ...ch.eq.lpf },
+      } : undefined,
+      comp: ch.comp ? { ...ch.comp } : undefined,
+      gate: ch.gate ? { ...ch.gate } : undefined,
+    }));
+    deviceStore.routing = [...defaultDevice.routing];
+    deviceStore.eqLink = { ...defaultDevice.eqLink };
+
     console.log('[dm] sendFullConfigToDevice', {
-      deviceId: deviceStore.deviceGuid,
+      serverid: deviceStore.serverid,
+      guid: deviceStore.guid,
       channels: deviceStore.channels.length,
     });
 
-    // Push all channel settings to the device
     for (let i = 0; i < deviceStore.channels.length; i++) {
       const ch = deviceStore.channels[i];
       if (!ch) continue;
@@ -228,7 +211,7 @@ class DeviceManagerState {
         if (ch.isOutput) {
           if (ch.delayMs !== undefined) await deviceStore.dsp.delayMs(i, ch.delayMs);
           if (ch.comp) await deviceStore.dsp.compressor(i, ch.comp);
-          await deviceStore.dsp.routing(0x04 + i, deviceStore.routing[i]);
+          await deviceStore.dsp.routing(i, deviceStore.routing[i - OUT_BASE] ?? 0);
           if (ch.eq) {
             await deviceStore.dsp.crossoverHpf(i, deviceStore.calibration.xoverHzToRaw(ch.eq.hpf.freqHz), ch.eq.hpf.slope);
             await deviceStore.dsp.crossoverLpf(i, deviceStore.calibration.xoverHzToRaw(ch.eq.lpf.freqHz), ch.eq.lpf.slope);
@@ -244,38 +227,39 @@ class DeviceManagerState {
               });
             }
           }
-        } else {
-          if (ch.gate) await deviceStore.dsp.gate(i, ch.gate);
+        } else if (ch.gate) {
+          await deviceStore.dsp.gate(i, ch.gate);
         }
       } catch (e) {
         console.warn(`[dm] Failed to push channel ${i} config:`, e);
       }
     }
 
-    // Push routing (output 1-4)
-    for (let i = 0; i < deviceStore.routing.length; i++) {
-      try {
-        await deviceStore.dsp.routing(0x04 + i, deviceStore.routing[i]);
-      } catch (e) {
-        console.warn(`[dm] Failed to push routing ${i}:`, e);
-      }
-    }
-
-    // Push preset name and active preset
-    if (deviceStore.presetName) {
-      // Note: SET_NAME command sets the current preset name on device
-    }
-
     console.log('[dm] sendFullConfigToDevice done');
+  }
+
+  /** Push the given UI model's full state to every bound shadow's hardware. */
+  async pushFullConfigToAllFrom(model: typeof defaultDevice): Promise<void> {
+    for (const device of this.devices) {
+      if (!device.connected || !device.store.dsp) continue;
+      device.store.channels = model.channels.map(ch => ({
+        ...ch,
+        eq: ch.eq ? {
+          bands: ch.eq.bands.map(b => ({ ...b })),
+          hpf: { ...ch.eq.hpf },
+          lpf: { ...ch.eq.lpf },
+        } : undefined,
+        comp: ch.comp ? { ...ch.comp } : undefined,
+        gate: ch.gate ? { ...ch.gate } : undefined,
+      }));
+      device.store.routing = [...model.routing];
+      device.store.eqLink = { ...model.eqLink };
+      await this.sendFullConfigToDevice(device.store).catch(() => {});
+    }
   }
 
   // --- live broadcast (state mirror + per-field hardware push) -----------
 
-  /**
-   * Broadcast a channel update to all connected DSP devices.
-   * The change originated from the UI local model, so we push to all devices
-   * including the one that may have triggered the change (for redundancy).
-   */
   broadcastChannelUpdate(channelIndex: number, updates: Partial<Channel>): void {
     if (this.connectedDevices.length === 0) return;
     for (const device of this.devices) {
@@ -283,11 +267,9 @@ class DeviceManagerState {
       const ch = device.store.channels[channelIndex];
       if (!ch) continue;
 
-      // Mirror to the device's store
       Object.assign(ch, updates);
       device.store.channels = [...device.store.channels];
 
-      // Push to the hardware via dsp directly (bypasses commit()).
       const dsp = device.store.dsp;
       if (!dsp) continue;
       (async () => {
@@ -310,11 +292,9 @@ class DeviceManagerState {
       const i = outIndex - 0x04;
       if (i < 0 || i >= device.store.routing.length) continue;
 
-      // Mirror to store.
       device.store.routing[i] = mask;
       device.store.routing = [...device.store.routing];
 
-      // Push to hardware.
       const dsp = device.store.dsp;
       if (!dsp) continue;
       void dsp.routing(outIndex, mask).catch(() => {});
@@ -322,9 +302,6 @@ class DeviceManagerState {
   }
 
   broadcastEqLinkUpdate(a: number, b: number): void {
-    // EQ links are a UI-only concept (they pair two outputs for mirrored
-    // editing). There is no wire command for "link EQ", so this is
-    // store-only — no dsp push.
     if (this.connectedDevices.length === 0) return;
     for (const device of this.devices) {
       if (!device.connected) continue;
@@ -340,12 +317,9 @@ class DeviceManagerState {
       const eq = ch?.eq;
       if (!eq || !Array.isArray(eq.bands) || bandIndex >= eq.bands.length) continue;
 
-      // Mirror to store.
       Object.assign(eq.bands[bandIndex]!, updates);
       device.store.channels = [...device.store.channels];
 
-      // Push to hardware. Uses the store's Calibration to convert
-      // engineering units back to wire values.
       const dsp = device.store.dsp;
       if (!dsp) continue;
       const b = eq.bands[bandIndex]!;
@@ -368,11 +342,9 @@ class DeviceManagerState {
       const eq = device.store.channels[channelIndex]?.eq;
       if (!eq || !(type in eq)) continue;
 
-      // Mirror to store.
       Object.assign((eq as any)[type], updates);
       device.store.channels = [...device.store.channels];
 
-      // Push to hardware.
       const dsp = device.store.dsp;
       const cal = device.store.calibration;
       if (!dsp || !cal) continue;
@@ -401,10 +373,10 @@ class DeviceManagerState {
     return Object.values(this.loadBindings()[url] ?? {});
   }
 
-  forgetBinding(url: string, deviceId: string): void {
+  forgetBinding(url: string, guid: string): void {
     const map = this.loadBindings();
-    if (map[url]?.[deviceId]) {
-      delete map[url][deviceId];
+    if (map[url]?.[guid]) {
+      delete map[url][guid];
       if (Object.keys(map[url]!).length === 0) delete map[url];
       this.#saveBindings(map);
     }
@@ -416,27 +388,27 @@ class DeviceManagerState {
 
   #recordBinding(rec: ConnectedDevice): void {
     const url = rec.connectionInfo.url;
-    const deviceId = rec.deviceId;
-    if (!url || !deviceId) return;
+    const guid = rec.guid;
+    const serverid = rec.serverid;
+    if (!url || !guid || !serverid) return;
     const map = this.loadBindings();
     map[url] = map[url] ?? {};
-    map[url]![deviceId] = {
-      deviceId,
+    map[url]![guid] = {
+      guid,
+      serverid,
       productName: rec.connectionInfo.productName,
-      deviceGuid: rec.deviceGuid ?? "",
-      publishedId: rec.publishedId ?? "",
-      kind: "hid",
+      kind: 'hid',
     };
     this.#saveBindings(map);
   }
 
   #dropBinding(rec: ConnectedDevice): void {
     const url = rec.connectionInfo.url;
-    const deviceId = rec.deviceId;
-    if (!url || !deviceId) return;
+    const guid = rec.guid;
+    if (!url || !guid) return;
     const map = this.loadBindings();
-    if (map[url]?.[deviceId]) {
-      delete map[url][deviceId];
+    if (map[url]?.[guid]) {
+      delete map[url][guid];
       if (Object.keys(map[url]!).length === 0) delete map[url];
       this.#saveBindings(map);
     }
@@ -457,12 +429,14 @@ class DeviceManagerState {
       const state = {
         devices: this.devices.map(d => ({
           id: d.id,
-          connectionInfo: d.connectionInfo, serverGuid: d.serverGuid,
-          deviceGuid: d.deviceGuid, connected: d.connected,
+          connectionInfo: d.connectionInfo,
+          serverid: d.serverid,
+          guid: d.guid,
+          connected: d.connected,
         })),
         servers: this.servers.map(s => ({
           id: s.id, url: s.url, productName: s.productName,
-          serverGuid: s.serverGuid, connectedAt: s.connectedAt,
+          serverid: s.serverid, connectedAt: s.connectedAt,
         })),
       };
       localStorage.setItem("opendsp-device-manager-state", JSON.stringify(state));
@@ -475,9 +449,9 @@ class DeviceManagerState {
       if (!raw) return;
       const state = JSON.parse(raw);
       this.devices = (state.devices ?? []).map((d: any) => ({
-        id: d.id, store: defaultDevice, transportType: d.transportType,
+        id: d.id, store: defaultDevice,
         connectionInfo: d.connectionInfo,
-        serverGuid: d.serverGuid, deviceGuid: d.deviceGuid, connected: false,
+        serverid: d.serverid, guid: d.guid, connected: false,
       }));
       this.servers = state.servers ?? [];
     } catch (e) { console.error('Error restoring device manager state:', e); }
@@ -486,19 +460,6 @@ class DeviceManagerState {
   clearConnectionState(): void {
     try { localStorage.removeItem("opendsp-device-manager-state"); }
     catch (e) { console.error('Error clearing device manager state:', e); }
-  }
-
-  #hasBoundDevice(): boolean {
-    try {
-      const raw = localStorage.getItem("opendsp-bound-devices");
-      if (raw) {
-        var boundDevices = JSON.parse(raw);
-        return !!raw && raw.length > 5;
-      } else {
-        return false;
-      }
-    } catch { /* ignore */ }
-    return false;
   }
 }
 

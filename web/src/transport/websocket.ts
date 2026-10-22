@@ -2,44 +2,47 @@
 // The server proxies USB HID reports: request frames are sent to the server,
 // and reply frames are received from the server.
 //
-// Protocol format (bridge.js v2):
-//   JSON messages with type field:
-//     - 'report': device response data, base64-encoded in 'data' field
-//     - 'request': host command, base64-encoded in 'data' field
+// Protocol format (bridge.js v3):
+//   JSON messages with `type`:
+//     - 'report': device response data, base64-encoded in `data`
+//     - 'request': host command, base64-encoded in `data`
 //     - 'subscribed': confirmation of device subscription
+//     - 'unsubscribed': confirmation of unsubscription
 //     - 'settings_update': device settings change notification
 //     - 'devices': list of available devices (serverId + devices array)
+//     - 'device_gone': device disconnected
+//     - 'error': error response
 //
-// DeviceSvelte identifiers:
-//   - deviceGuid: "DSP" + 5-char alphanumeric (stable per physical device)
-//   - publishedId: "SERVER_ID-DSP_GUID" (e.g., "Q7X2K-DSP7C4H9")
+// Identifier model (matches bridge.js):
+//   SERVER_ID = 5-char alphanumeric server id (e.g. "Q7X2K")
+//   guid      = "DSP" + 5-char alphanumeric (e.g. "DSP7C4H9")
+//   serverid  = SERVER_ID  (server identity; same for every device on a bridge)
+//
+// Every message carries BOTH `guid` and `serverid`. The pair (serverid, guid)
+// is the globally unique device identity. Within one bridge `guid` alone is
+// unique, so a shared WebSocketTransport may serve many devices; each Dsp
+// sends its own `guid` on every request and the transport routes each reply
+// back to the matching pending request.
 
 import type { DspTransport } from "./transport.ts";
 
-const WS_DEBUG = true;   // set false to silence after diagnosis
-function wlog(...args: unknown[]) {
-  if (WS_DEBUG) console.log('%c[ws]', 'color:#8fa5c4', ...args);
-}
-
 export interface DeviceReport {
   type: 'report';
-  deviceId: string;
-  deviceGuid: string;
-  publishedId: string;
-  data: string;
+  guid: string;
+  serverid: string;
+  data: string; // base64-encoded binary
 }
 
 export interface RequestMessage {
   type: 'request';
-  deviceId?: string;
-  data: string;
+  guid?: string;
+  data: string; // base64-encoded frame
 }
 
 export interface SubscribedMessage {
   type: 'subscribed';
-  deviceId: string;
-  deviceGuid: string;
-  publishedId: string;
+  guid: string;
+  serverid: string;
   product: string;
   kind: 'hid' | 'mock';
   subscriberCount?: number;
@@ -48,17 +51,15 @@ export interface SubscribedMessage {
 
 export interface UnsubscribedMessage {
   type: 'unsubscribed';
-  deviceId: string;
-  deviceGuid: string | null;
-  publishedId: string | null;
+  guid: string | null;
+  serverid: string | null;
   subscriberCount: number | null;
 }
 
 export interface SettingsUpdateMessage {
   type: 'settings_update';
-  deviceId: string;
-  deviceGuid: string;
-  publishedId: string;
+  guid: string;
+  serverid: string;
   timestamp: string;
   channels: Array<{
     index: number;
@@ -80,29 +81,28 @@ export interface DevicesMessage {
   type: 'devices';
   serverId: string;
   devices: Array<{
-    id: string;
+    guid: string;
+    serverid: string;
     kind: 'hid' | 'mock';
     path: string;
-    deviceGuid: string;
-    publishedId: string;
     product: string;
     connectedAt: string;
+    subscriberCount: number;
     subscribed: boolean;
   }>;
 }
 
 export interface DeviceGoneMessage {
   type: 'device_gone';
-  deviceId: string;
-  deviceGuid: string;
-  publishedId: string;
+  guid: string;
+  serverid: string;
 }
 
 export interface ErrorMessage {
   type: 'error';
   code: string;
   message?: string;
-  deviceId?: string;
+  guid?: string;
 }
 
 export type BridgeMessage =
@@ -114,39 +114,36 @@ export type BridgeMessage =
     | DeviceGoneMessage
     | ErrorMessage;
 
+const WS_DEBUG = true;
+function wlog(...args: unknown[]) {
+  if (WS_DEBUG) console.log('%c[ws]', 'color:#8fa5c4', ...args);
+}
+
 /**
  * WebSocketTransport
  *
  * - One socket per server.
- * - Reports for a *specific* device are filtered to that device's bound
- *   listeners via `onReport` / `request`. Reports from other devices on the
- *   same socket are still delivered to generic `message` listeners, so a
- *   DeviceSvelte that filters by deviceId itself also works.
+ * - Reports for a specific device are routed via `pendingFor` = the guid of the
+ *   in-flight request. Reports for other devices on the same socket still reach
+ *   generic `message` listeners, so a DeviceSvelte that filters by guid sees
+ *   exactly its own traffic.
  * - `send(text)` for fire-and-forget JSON (subscribe / unsubscribe / requests).
  */
 export class WebSocketTransport implements DspTransport {
-  /** Raw-byte listeners, already filtered to the bound device. */
+  /** Raw-byte listeners (unfiltered; consumer filters). */
   private listeners = new Set<(r: Uint8Array) => void>();
-  /** Typed-message listeners, unfiltered (consumer filters on deviceId). */
+  /** Typed-message listeners (unfiltered; consumer filters). */
   private msgListeners = new Set<(m: BridgeMessage) => void>();
   private pending: ((r: Uint8Array | null) => void) | null = null;
-  private pendingFor: string | null = null; // deviceId we're waiting on
+  private pendingFor: string | null = null; // guid we're waiting on
   private chain: Promise<unknown> = Promise.resolve();
   private closed = false;
 
-  // DeviceSvelte info from subscription
-  public deviceGuid?: string;
-  public publishedId?: string;
+  /** Informational — the most recent subscribed ack on this socket. */
+  public guid?: string;
+  public serverid?: string;
   public productName = "DSP 4x4 (remote)";
   public kind: 'hid' | 'mock' = 'hid';
-
-  /**
-   * When non-null, only reports / settings_update / subscribed / device_gone
-   * for this deviceId reach the raw listener set. When null (before any
-   * `subscribe()`), the socket acts as a "server-level" transport that does
-   * not filter — used by server-manager to listen for `devices` broadcasts.
-   */
-  public boundDeviceId: string | null = null;
 
   static supported(): boolean {
     return typeof WebSocket !== "undefined";
@@ -166,12 +163,13 @@ export class WebSocketTransport implements DspTransport {
       this.ws = ws;
 
       this.messageHandler = (e: MessageEvent) => {
-
-        // --- DEBUG: show every raw frame that reaches the transport ---
+        // Debug: show every raw frame that reaches the transport.
         if (typeof e.data === 'string') {
           try {
             const m = JSON.parse(e.data);
-            wlog('RX raw', m.type, 'deviceId=' + (m.deviceId ?? '-'),
+            wlog('RX raw', m.type,
+                'guid=' + (m.guid ?? '-'),
+                'serverid=' + (m.serverid ?? '-'),
                 'dataLen=' + (m.data ? m.data.length : '-'));
           } catch {
             wlog('RX raw (non-JSON)', e.data.slice(0, 80));
@@ -179,7 +177,6 @@ export class WebSocketTransport implements DspTransport {
         } else if (e.data instanceof ArrayBuffer) {
           wlog('RX raw (binary)', 'bytes=' + e.data.byteLength);
         }
-        // --- /DEBUG ---
 
         try {
           if (typeof e.data === "string") {
@@ -238,33 +235,29 @@ export class WebSocketTransport implements DspTransport {
   // --- message dispatch ---------------------------------------------------
 
   private dispatch(msg: BridgeMessage): void {
-    wlog('dispatch', msg.type, 'deviceId=' + ((msg as any).deviceId ?? '-'));
-    // Always fan out to typed listeners (consumers filter on deviceId).
+    wlog('dispatch', msg.type,
+        'guid=' + ((msg as any).guid ?? '-'),
+        'serverid=' + ((msg as any).serverid ?? '-'));
+
+    // Fan out to typed listeners (unfiltered — consumers filter by guid+serverid).
     for (const cb of this.msgListeners) {
       try { cb(msg); } catch { /* ignore */ }
     }
 
     switch (msg.type) {
       case 'report': {
-        // No boundDeviceId filter — each Dsp already passes its own deviceId
-        // into request(), and handleReport resolves only the matching pending.
         this.handleReportMessage(msg);
         return;
       }
       case 'subscribed':
-        if (!this.boundDeviceId || msg.deviceId === this.boundDeviceId) {
-          this.handleSubscribedMessage(msg);
-        }
+        this.handleSubscribedMessage(msg);
         return;
       case 'settings_update':
-        // Informational for the transport; consumers do the parsing.
         return;
       case 'devices':
-        // Server-level; typed listeners handle it.
         return;
       case 'unsubscribed':
       case 'device_gone':
-        // Informational for the transport; consumers handle it.
         return;
       case 'error':
         console.warn(`[bridge] ${msg.code}${msg.message ? `: ${msg.message}` : ''}`);
@@ -277,45 +270,42 @@ export class WebSocketTransport implements DspTransport {
       const decoded = atob(msg.data);
       const bytes = new Uint8Array(decoded.length);
       for (let i = 0; i < decoded.length; i++) bytes[i] = decoded.charCodeAt(i);
-      wlog('handleReportMessage', 'dev=' + msg.deviceId,
-          'bytes=' + bytes.length,
+      wlog('handleReportMessage', 'guid=' + msg.guid, 'bytes=' + bytes.length,
           'head=' + Array.from(bytes.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' '));
-      this.handleReport(bytes, msg.deviceId);
+      this.handleReport(bytes, msg.guid);
     } catch (err) {
       console.warn(`WebSocket: Failed to decode report data`, err);
     }
   }
 
   private handleSubscribedMessage(msg: SubscribedMessage): void {
-    // Informational only. Do NOT lock in a deviceId: this transport may be
-    // shared by multiple Dsp instances, each with a different deviceId.
-    this.deviceGuid = msg.deviceGuid;
-    this.publishedId = msg.publishedId;
+    this.guid = msg.guid;
+    this.serverid = msg.serverid;
     this.productName = msg.product;
     this.kind = msg.kind;
-    console.log(`Subscribed to device: ${msg.publishedId} (${msg.kind})`);
+    console.log(`Subscribed to device: ${msg.guid} (${msg.kind}) on ${msg.serverid}`);
   }
 
-  private handleReport(report: Uint8Array, deviceId: string | undefined): void {
+  private handleReport(report: Uint8Array, guid: string | undefined): void {
     const hadPending = this.pending !== null;
-    const matchesPending =
-        this.pendingFor === null || deviceId === this.pendingFor;
+    const matches = this.pendingFor === null || guid === this.pendingFor;
 
-    wlog('handleReport', 'dev=' + (deviceId ?? '-'),
+    wlog('handleReport', 'guid=' + (guid ?? '-'),
         'hadPending=' + hadPending,
         'pendingFor=' + (this.pendingFor ?? '-'),
-        'matches=' + matchesPending);
+        'matches=' + matches);
 
-
-    // Only resolve a pending request if it belongs to the device we asked for.
-    if (this.pending) {
-      if (this.pendingFor === null || deviceId === this.pendingFor) {
-        const resolve = this.pending;
-        this.pending = null;
-        this.pendingFor = null;
-        resolve(report);
-      }
+    if (this.pending && matches) {
+      const resolve = this.pending;
+      this.pending = null;
+      this.pendingFor = null;
+      resolve(report);
+    } else if (this.pending) {
+      wlog('  report does not match pendingFor — dropped for resolver');
+    } else {
+      wlog('  no pending request (report is unsolicited)');
     }
+
     for (const cb of this.listeners) {
       try { cb(report); } catch { /* ignore */ }
     }
@@ -323,10 +313,7 @@ export class WebSocketTransport implements DspTransport {
 
   // --- public API --------------------------------------------------------
 
-  /**
-   * Send a raw JSON text frame. Used for fire-and-forget actions
-   * (subscribe, unsubscribe, and per-device requests).
-   */
+  /** Send a raw JSON text frame. */
   send(text: string): void {
     if (!this.ws) throw new Error("WebSocketTransport: not opened");
     if (this.ws.readyState !== WebSocket.OPEN) {
@@ -335,7 +322,6 @@ export class WebSocketTransport implements DspTransport {
     this.ws.send(text);
   }
 
-  /** Convenience: send a typed message object as JSON. */
   sendMessage(msg: object): void {
     this.send(JSON.stringify(msg));
   }
@@ -343,6 +329,12 @@ export class WebSocketTransport implements DspTransport {
   onClose(cb: () => void): void {
     if (!this.ws) throw new Error("WebSocketTransport: not opened");
     this.ws.addEventListener("close", cb);
+  }
+
+  onCloseListener(cb: () => void): () => void {
+    if (!this.ws) return () => {};
+    this.ws.addEventListener("close", cb);
+    return () => { try { this.ws?.removeEventListener("close", cb); } catch { /* ignore */ } };
   }
 
   addEventListener(type: 'open' | 'close' | 'message', cb: (ev: any) => void): void {
@@ -355,54 +347,36 @@ export class WebSocketTransport implements DspTransport {
     this.ws.removeEventListener(type, cb as EventListener);
   }
 
-  onCloseListener(cb: () => void): () => void {
-    if (!this.ws) return () => {};
-    this.ws.addEventListener('close', cb);
-    return () => { try { this.ws?.removeEventListener('close', cb); } catch { /* ignore */ } };
-  }
-
-  /**
-   * Register a listener for typed bridge messages (unfiltered). Consumers
-   * filter on `msg.deviceId` themselves. Returns an unsubscribe function.
-   */
   onMessage(cb: (msg: BridgeMessage) => void): () => void {
     this.msgListeners.add(cb);
     return () => { this.msgListeners.delete(cb); };
   }
 
-  /**
-   * Register a listener for *this device's* reports only. Returns an
-   * unsubscribe function.
-   */
   onReport(cb: (r: Uint8Array) => void): () => void {
     this.listeners.add(cb);
     return () => { this.listeners.delete(cb); };
   }
 
   /**
-   * Send a request frame and wait for the next report *from the same device*.
-   * Serialized through `chain` so overlapping callers can't interleave
-   * replies.
+   * Send a request frame and wait for the next report from the same device.
+   * Serialized through `chain` so overlapping callers can't interleave replies.
+   * The `guid` is forwarded to the bridge so the reply can be routed back.
    */
-  async request(frame: Uint8Array, timeoutMs = 1200, deviceId?: string): Promise<Uint8Array> {
+  async request(frame: Uint8Array, timeoutMs = 1200, guid?: string): Promise<Uint8Array> {
     if (!this.ws || this.closed) throw new Error("transport not open");
-    const run = this.chain.then(() => this.sendOne(frame, timeoutMs, deviceId));
+    const run = this.chain.then(() => this.sendOne(frame, timeoutMs, guid));
     this.chain = run.then(() => undefined, () => undefined);
     return run;
   }
 
-  private async sendOne(frame: Uint8Array, timeoutMs: number, deviceId: string | undefined): Promise<Uint8Array> {
+  private async sendOne(frame: Uint8Array, timeoutMs: number, guid: string | undefined): Promise<Uint8Array> {
     if (!this.ws || this.closed) throw new Error("transport not open");
-    wlog('sendOne START', 'deviceId=' + (deviceId ?? '-'),
-        'frameLen=' + frame.length,
-        'head=' + Array.from(frame.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' '));
-
 
     const perMs = 400;
     for (let i = 0; i * perMs < timeoutMs; i++) {
       const reply = new Promise<Uint8Array | null>((resolve) => {
         this.pending = resolve;
-        this.pendingFor = deviceId ?? null;
+        this.pendingFor = guid ?? null;
         wlog('  attempt', i, 'pendingFor=' + (this.pendingFor ?? '-'));
         setTimeout(() => {
           if (this.pending === resolve) {
@@ -417,7 +391,7 @@ export class WebSocketTransport implements DspTransport {
         const data = btoa(binary);
         try {
           const msg: RequestMessage = { type: 'request', data };
-          if (deviceId) msg.deviceId = deviceId;
+          if (guid) msg.guid = guid;
           this.send(JSON.stringify(msg));
         } catch {
           if (this.pending === resolve) {
@@ -429,13 +403,8 @@ export class WebSocketTransport implements DspTransport {
       });
 
       const r = await reply;
-      if (r && !this.closed) {
-        wlog('sendOne DONE', 'deviceId=' + (deviceId ?? '-'), 'bytes=' + r.length);
-        return r;
-      }
-      wlog('sendOne attempt null (no reply within perMs)');
+      if (r && !this.closed) return r;
     }
-    wlog('sendOne THROWING reply timeout', 'deviceId=' + (deviceId ?? '-'));
     throw new Error("reply timeout");
   }
 }

@@ -271,7 +271,7 @@
         .msg-entry.inbound  { border-left-color: #3a5a4a; }
         .msg-entry.outbound { border-left-color: #3a4a5e; }
         .msg-entry .ts  { color: var(--text-faint); }
-        .msg-entry .dev { color: var(--text-dim); max-width: 12ch;
+        .msg-entry .dev { color: var(--text-dim); max-width: 14ch;
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .msg-entry .dir { color: var(--text-faint); font-size: .62rem; text-transform: uppercase; }
         .msg-entry .summary {
@@ -289,34 +289,12 @@
             color: var(--text-faint);
             margin-right: .3rem;
         }
-        /* FIX: expanded rows need to wrap instead of ellipsizing. */
         .msg-entry.expanded .summary {
             white-space: pre-wrap;
             word-break: break-all;
             overflow: visible;
             text-overflow: clip;
         }
-
-        /* FIX: style for the connection-log rows that the original HTML
-           rendered with class .log-entry / .http / .ws but never styled. */
-        .log-entry {
-            display: grid;
-            grid-template-columns: auto 4rem 1fr;
-            gap: .4rem;
-            padding: .18rem .5rem;
-            margin-bottom: 1px;
-            background: var(--bg-alt);
-            border-radius: 3px;
-            font-size: .71rem;
-            font-family: var(--mono);
-        }
-        .log-entry .ts { color: var(--text-faint); }
-        .log-entry .m  { color: var(--text-dim); text-transform: uppercase; font-size: .62rem; }
-        .log-entry .p  { color: var(--text); overflow: hidden; text-overflow: ellipsis;
-            white-space: nowrap; }
-        .log-entry.http .m { color: #8fa5c4; }
-        .log-entry.ws   .m { color: #a08cc4; }
-        #logs-scroll { max-height: 220px; overflow: auto; }
     </style>
 </head>
 <body>
@@ -355,13 +333,6 @@
 </h2>
 <div id="msgs-scroll"><div id="msgs"><div class="empty">—</div></div></div>
 
-<!--<h2 style="display:flex;align-items:center;gap:.5rem;">-->
-<!--    Connection logs-->
-<!--    <button id="clear-logs" class="secondary"-->
-<!--            style="font-size:.7rem;padding:.1rem .4rem;margin-left:auto;">clear</button>-->
-<!--</h2>-->
-<!--<div id="logs-scroll"><div id="logs"><div class="empty">—</div></div></div>-->
-
 <script>
     (() => {
         const $ = (id) => document.getElementById(id);
@@ -369,9 +340,9 @@
             ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 
         let ws = null;
-        const devices = new Map();
-        const subscriptions = new Set();
-        const settings = new Map();
+        const devices = new Map();          // guid -> DeviceInfo (with `serverid`, `kind`, etc.)
+        const subscriptions = new Set();    // guids
+        const settings = new Map();         // guid -> { channels, routing }
 
         // ----------------------------------------------------------------
         // Server info / status
@@ -380,9 +351,6 @@
             try {
                 const info = await (await fetch('/server-info')).json();
                 $('server-id').textContent = info.serverId;
-                // FIX: backend now reports actual bound host; if it is not
-                // 127.0.0.1, connect from the browser via window.location
-                // (the WS URL shown is what *other* clients should use).
                 const host = info.host || location.hostname;
                 $('ws-url').textContent = `ws://${host}:${info.port}`;
                 $('mock-state').textContent = info.mockMode ? 'ON' : 'OFF';
@@ -402,33 +370,11 @@
             } catch (e) { console.error(e); }
         }
 
-        // async function loadLogs() {
-        //     try {
-        //         const logs = await (await fetch('/logs/connections')).json();
-        //         const el = $('logs');
-        //         if (!logs.length) { el.innerHTML = '<div class="empty">—</div>'; return; }
-        //         el.innerHTML = logs.slice(0, 200).map(l => {
-        //             // FIX: connectionLogs entries use .type ('http_request'),
-        //             // .method, .path; there is no separate WS type in the
-        //             // current backend, so classify by presence of method.
-        //             const cls = l.type === 'http_request' ? 'http' : 'ws';
-        //             const method = l.method || l.type || '';
-        //             return `<div class="log-entry ${cls}">
-        //                 <span class="ts">${esc((l.timestamp || '').slice(11, 23))}</span>
-        //                 <span class="m">${esc(method)}</span>
-        //                 <span class="p" title="${esc(l.path || '')}">${esc(l.path || '')}</span>
-        //             </div>`;
-        //         }).join('');
-        //     } catch (e) { console.error(e); }
-        // }
-
         // ----------------------------------------------------------------
-        // Message log (HID / WS payloads)
+        // Message log
         // ----------------------------------------------------------------
         const TRUNC = 120;
 
-        // FIX: single definition (original had two; the second overwrote the
-        // first and made loadMessages call renderMessages twice per tick).
         async function loadMessages() {
             try {
                 const logs = await (await fetch('/logs/messages')).json();
@@ -443,19 +389,18 @@
                 const kind = l.summary?.kind ?? 'none';
                 const full = l.summary?.text ?? '';
                 const short = full.length > TRUNC ? full.slice(0, TRUNC) + '…' : full;
-                const dev = l.publishedId ? l.publishedId.slice(-12) : (l.deviceId || '—');
+                // Every log entry carries both. `guid` identifies the device;
+                // `serverid` identifies the bridge. Show the guid.
+                const label = l.guid ?? l.serverid ?? '—';
                 const prefix =
                     kind === 'json' ? 'JSON' :
                         kind === 'hex'  ? 'HEX'  :
                             kind === 'text' ? 'TXT'  : '';
-                // FIX: put the full text on the element so the click handler
-                // can expand it. The original referenced row.dataset.full
-                // which was never written.
                 return `
                     <div class="msg-entry ${esc(l.direction || '')}"
                          data-full="${esc(full)}">
                         <span class="ts">${esc((l.timestamp || '').slice(11, 23))}</span>
-                        <span class="dev" title="${esc(l.publishedId || l.deviceId || '')}">${esc(dev)}</span>
+                        <span class="dev" title="${esc(label)}">${esc(label)}</span>
                         <span class="dir">${esc(l.direction || '')}</span>
                         <span class="summary ${esc(kind)}"
                               data-prefix="${esc(prefix)}"
@@ -464,15 +409,12 @@
             }).join('');
         }
 
-        // FIX: one clear handler (was bound twice) and it now resets the
-        // poll target so the next 2s tick doesn't immediately repopulate.
         let msgsClearedAt = 0;
         $('clear-msgs').onclick = () => {
             $('msgs').innerHTML = '<div class="empty">—</div>';
             msgsClearedAt = Date.now();
         };
 
-        // FIX: expand/collapse reads from data-full on the row.
         $('msgs').addEventListener('click', (e) => {
             const row = e.target.closest('.msg-entry');
             if (!row) return;
@@ -480,15 +422,13 @@
             if (!summary) return;
             const full = row.dataset.full || '';
             row.classList.toggle('expanded');
-            if (row.classList.contains('expanded')) {
-                summary.textContent = full;
-            } else {
-                summary.textContent = full.length > TRUNC ? full.slice(0, TRUNC) + '…' : full;
-            }
+            summary.textContent = row.classList.contains('expanded')
+                ? full
+                : (full.length > TRUNC ? full.slice(0, TRUNC) + '…' : full);
         });
 
         // ----------------------------------------------------------------
-        // Click-to-copy on the WS address
+        // Click-to-copy
         // ----------------------------------------------------------------
         async function copyText(text) {
             if (navigator.clipboard && window.isSecureContext) {
@@ -509,7 +449,6 @@
                 return ok;
             } catch { return false; }
         }
-
         function flashCopied(el, ok) {
             const icon = el.querySelector('.icon');
             const prev = icon.textContent;
@@ -520,16 +459,15 @@
                 icon.textContent = prev;
             }, 1200);
         }
-
         $('ws-copy').addEventListener('click', async () => {
             const text = $('ws-url').textContent.trim();
             if (!text || text === 'ws://…') return;
-            const ok = await copyText(text);
-            flashCopied($('ws-copy'), ok);
+            flashCopied($('ws-copy'), await copyText(text));
         });
 
         // ----------------------------------------------------------------
-        // WebSocket bridge
+        // WebSocket bridge — keyed by `guid` throughout.
+        // Server sends both `guid` (per device) and `serverid` (per bridge).
         // ----------------------------------------------------------------
         function connect() {
             const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -537,40 +475,67 @@
 
             ws.onopen = () => {
                 ws.send(JSON.stringify({ type: 'action', action: 'list_devices' }));
-                for (const id of subscriptions) {
-                    ws.send(JSON.stringify({ type: 'action', action: 'subscribe', deviceId: id }));
+                for (const guid of subscriptions) {
+                    ws.send(JSON.stringify({ type: 'action', action: 'subscribe', guid }));
                 }
             };
 
             ws.onmessage = (e) => {
                 let msg; try { msg = JSON.parse(e.data); } catch { return; }
-                if (msg.type === 'devices') {
-                    devices.clear();
-                    for (const d of msg.devices) devices.set(d.id, d);
-                    render();
-                } else if (msg.type === 'subscribed') {
-                    subscriptions.add(msg.deviceId);
-                    if (typeof msg.subscriberCount === 'number') {
-                        setSubscriberCount(msg.deviceId, msg.subscriberCount);
+                const guid = msg.guid ?? null;
+                switch (msg.type) {
+                    case 'devices': {
+                        devices.clear();
+                        for (const d of msg.devices) devices.set(d.guid, d);
+                        render();
+                        return;
                     }
-                    render();
-                } else if (msg.type === 'unsubscribed') {
-                    subscriptions.delete(msg.deviceId);
-                    settings.delete(msg.deviceId);
-                    if (typeof msg.subscriberCount === 'number') {
-                        setSubscriberCount(msg.deviceId, msg.subscriberCount);
+                    case 'subscribed': {
+                        if (!guid) return;
+                        subscriptions.add(guid);
+                        if (typeof msg.subscriberCount === 'number') {
+                            setSubscriberCount(guid, msg.subscriberCount);
+                        }
+                        if (!devices.has(guid)) {
+                            devices.set(guid, {
+                                guid,
+                                serverid: msg.serverid,
+                                product: msg.product,
+                                kind: msg.kind,
+                                subscriberCount: msg.subscriberCount ?? 1,
+                            });
+                        }
+                        render();
+                        return;
                     }
-                    render();
-                } else if (msg.type === 'device_gone') {
-                    subscriptions.delete(msg.deviceId);
-                    settings.delete(msg.deviceId);
-                    devices.delete(msg.deviceId);
-                    render();
-                } else if (msg.type === 'settings_update') {
-                    settings.set(msg.deviceId, { channels: msg.channels, routing: msg.routing });
-                    render();
-                } else if (msg.type === 'error') {
-                    console.warn('bridge error:', msg.code, msg.message || '');
+                    case 'unsubscribed': {
+                        if (!guid) return;
+                        subscriptions.delete(guid);
+                        settings.delete(guid);
+                        if (typeof msg.subscriberCount === 'number') {
+                            setSubscriberCount(guid, msg.subscriberCount);
+                        }
+                        render();
+                        return;
+                    }
+                    case 'device_gone': {
+                        if (!guid) return;
+                        subscriptions.delete(guid);
+                        settings.delete(guid);
+                        devices.delete(guid);
+                        render();
+                        return;
+                    }
+                    case 'settings_update': {
+                        if (!guid) return;
+                        settings.set(guid, { channels: msg.channels, routing: msg.routing });
+                        render();
+                        return;
+                    }
+                    case 'error': {
+                        console.warn('bridge error:', msg.code, msg.message || '');
+                        return;
+                    }
                 }
             };
 
@@ -578,10 +543,10 @@
             ws.onerror = (e) => console.error('WS error:', e);
         }
 
-        function setSubscriberCount(deviceId, n) {
-            const d = devices.get(deviceId);
+        function setSubscriberCount(guid, n) {
+            const d = devices.get(guid);
             if (!d) return;
-            devices.set(deviceId, { ...d, subscriberCount: n });
+            devices.set(guid, { ...d, subscriberCount: n });
         }
 
         // ----------------------------------------------------------------
@@ -593,21 +558,18 @@
                 grid.innerHTML = '<div class="empty">No devices yet…</div>';
                 return;
             }
-            // FIX: preserve DOM order by sorting — Map iteration order is
-            // insertion order, which fluctuates as SSE merges new devices.
-            const ids = [...devices.keys()].sort((a, b) => {
+            const guids = [...devices.keys()].sort((a, b) => {
                 const A = devices.get(a), B = devices.get(b);
-                // mocks after hids, then by slot/id
                 if (A.kind !== B.kind) return A.kind === 'hid' ? -1 : 1;
                 return String(a).localeCompare(String(b), undefined, { numeric: true });
             });
-            grid.innerHTML = ids.map(buildCard).join('');
+            grid.innerHTML = guids.map(buildCard).join('');
         }
 
-        function buildCard(id) {
-            const d = devices.get(id) || {};
-            const subscribed = subscriptions.has(id);
-            const st = settings.get(id);
+        function buildCard(guid) {
+            const d = devices.get(guid) || {};
+            const subscribed = subscriptions.has(guid);
+            const st = settings.get(guid);
             const isMock = d.kind === 'mock';
 
             const kindPill = `<span class="pill ${esc(d.kind)}">${esc(d.kind)}</span>`;
@@ -637,14 +599,14 @@
             }
 
             return `
-                <div class="device-card ${subscribed ? 'subscribed' : ''}" data-device-id="${esc(id)}">
+                <div class="device-card ${subscribed ? 'subscribed' : ''}" data-guid="${esc(guid)}">
                     <header>
-                        <span class="name" title="${esc(d.product || id)}">${esc(d.product || id)}</span>
+                        <span class="name" title="${esc(d.product || guid)}">${esc(d.product || guid)}</span>
                         <span>${kindPill} ${subPill}</span>
                     </header>
                     <div class="meta">
-                        <div>id <b>${esc(d.publishedId || '—')}</b></div>
-                        <div>slot <b>${esc(id)}</b></div>
+                        <div>guid <b>${esc(d.guid || guid)}</b></div>
+                        <div>serverid <b>${esc(d.serverid || '—')}</b></div>
                         <div>subs <b>${d.subscriberCount ?? 0}</b></div>
                     </div>
                     <div class="body">
@@ -653,11 +615,11 @@
                     </div>
                     <div class="buttons">
                         ${subscribed
-                ? `<button class="secondary" data-action="unsub" data-id="${esc(id)}">Unsub</button>`
-                : `<button class="good"     data-action="sub"   data-id="${esc(id)}">Sub</button>`}
+                ? `<button class="secondary" data-action="unsub" data-guid="${esc(guid)}">Unsub</button>`
+                : `<button class="good"     data-action="sub"   data-guid="${esc(guid)}">Sub</button>`}
                         ${isMock
                 ? `<button class="bad" style="margin-left:auto"
-                                   data-action="remove" data-id="${esc(id)}"
+                                   data-action="remove" data-guid="${esc(guid)}"
                                    title="Remove this mock device">×</button>`
                 : ''}
                     </div>
@@ -669,23 +631,22 @@
         // ----------------------------------------------------------------
         $('device-grid').addEventListener('click', (e) => {
             const btn = e.target.closest('button'); if (!btn) return;
-            const { action, id } = btn.dataset;
+            const { action, guid } = btn.dataset;
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
             if (action === 'sub') {
-                return ws.send(JSON.stringify({ type: 'action', action: 'subscribe', deviceId: id }));
+                return ws.send(JSON.stringify({ type: 'action', action: 'subscribe', guid }));
             }
             if (action === 'unsub') {
-                // Optimistic UI: the server will confirm with 'unsubscribed'.
-                subscriptions.delete(id);
+                subscriptions.delete(guid);
                 render();
-                return ws.send(JSON.stringify({ type: 'action', action: 'unsubscribe', deviceId: id }));
+                return ws.send(JSON.stringify({ type: 'action', action: 'unsubscribe', guid }));
             }
             if (action === 'remove') {
                 fetch('/mock', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ remove: id }),
+                    body: JSON.stringify({ remove: guid }),
                 }).then(loadStatus).catch(console.error);
                 return;
             }
@@ -705,7 +666,7 @@
                 });
                 if (res.ok) {
                     const data = await res.json();
-                    console.log('Added', data.publishedId);
+                    console.log('Added', data.guid, data.serverid);
                     loadStatus();
                 }
             } catch (e) { console.error(e); }
@@ -726,8 +687,6 @@
             } catch (e) { console.error(e); }
         };
 
-        // FIX: track mock state locally instead of scraping text content,
-        // which was fragile across concurrent updates.
         let mockOn = false;
         $('toggle-mock').onclick = async () => {
             try {
@@ -744,12 +703,6 @@
             } catch (e) { console.error(e); }
         };
 
-        // $('clear-logs').onclick = () => {
-        //     $('logs').innerHTML = '<div class="empty">—</div>';
-        //     logsClearedAt = Date.now();
-        // };
-        // let logsClearedAt = 0;
-
         // ----------------------------------------------------------------
         // SSE: device list
         // ----------------------------------------------------------------
@@ -758,40 +711,31 @@
             try {
                 const data = JSON.parse(e.data);
                 if (data.type !== 'devices_update') return;
-                const liveIds = new Set(data.devices.map(d => d.id));
+                const liveGuids = new Set(data.devices.map(d => d.guid));
                 for (const d of data.devices) {
-                    devices.set(d.id, { ...(devices.get(d.id) || {}), ...d });
+                    devices.set(d.guid, { ...(devices.get(d.guid) || {}), ...d });
                 }
-                for (const id of devices.keys()) if (!liveIds.has(id)) devices.delete(id);
+                for (const guid of [...devices.keys()]) {
+                    if (!liveGuids.has(guid)) devices.delete(guid);
+                }
                 render();
             } catch (err) { console.error(err); }
         };
-        devEs.onerror = () => {
-            // EventSource auto-reconnects; just note it.
-            console.warn('devices SSE error (will retry)');
-        };
+        devEs.onerror = () => console.warn('devices SSE error (will retry)');
 
         // ----------------------------------------------------------------
         // Boot
         // ----------------------------------------------------------------
-        // FIX: seed mockOn from server-info once so the toggle button agrees
-        // with reality after a page reload.
         (async () => {
             await loadServerInfo();
             mockOn = ($('mock-state').textContent === 'ON');
         })();
 
         loadStatus();
-        // loadLogs();
         loadMessages();
         connect();
 
         setInterval(loadStatus, 5000);
-        // setInterval(() => {
-        //     // FIX: skip poll if the user just cleared; avoids the "clear
-        //     // button doesn't work" flicker in the original.
-        //     if (Date.now() - logsClearedAt > 8000) loadLogs();
-        // }, 5000);
         setInterval(() => {
             if (Date.now() - msgsClearedAt > 8000) loadMessages();
         }, 2000);

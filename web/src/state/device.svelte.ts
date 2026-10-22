@@ -2,11 +2,14 @@
 // change is debounced + sent through the transport. Engineering-unit params
 // are converted to wire values via the Calibration seam.
 //
-// Works for remote (WebSocketTransport via bridge.js).
-// When bound via `bind()`, `this.dsp` is a real Dsp instance
-// pointed at the shared WebSocketTransport with this device's deviceId, so
-// every write path (setGainDb, peqBand, pushAll, hydrate, meters, presets)
-// uses the same code regardless of transport.
+// Two roles:
+//   - 'ui'    : the canonical model the UI renders. `dsp` is null. All edits
+//               mutate this store and are broadcast to bound shadows via
+//               deviceManager.broadcast*. Persisted once under a single key.
+//   - 'bound' : a hardware mirror created by the picker when a DSP connects.
+//               Holds a real `Dsp`. Hydrates from hardware, then mirrors into
+//               the UI model (first connect) or receives a push from the UI
+//               model (subsequent connects).
 import { WebSocketTransport } from "../transport/websocket.ts";
 import { Dsp } from "../dsp.ts";
 import { defaultCalibration, type Calibration } from "../eq/calibration.ts";
@@ -24,6 +27,8 @@ function dlog(...args: unknown[]) {
   if (DEV_DEBUG) console.log('%c[dev]', 'color:#a08cc4', ...args);
 }
 
+export type DeviceRole = 'ui' | 'bound';
+
 export class DeviceSvelte {
   connected = $state(false);
   productName = $state("");
@@ -37,11 +42,15 @@ export class DeviceSvelte {
   selected = $state(-1);
   eqLink = $state<Record<number, number>>({});
 
-  serverGuid?: string;
-  deviceGuid?: string;
+  serverid?: string;
+  guid?: string;
+
   currentPresetId = $state<string | null>(null);
 
-  // Public so the manager can dispatch pushed fields.
+  /** 'ui' = canonical model (default). 'bound' = a hardware shadow. */
+  role: DeviceRole = 'ui';
+
+  /** Only 'bound' stores have a real Dsp. */
   dsp: Dsp | null = null;
 
   private _ready: Promise<void> = Promise.resolve();
@@ -52,10 +61,10 @@ export class DeviceSvelte {
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
   private meterTimer?: ReturnType<typeof setInterval>;
 
-  // WebSocket bridge binding
+  // WebSocket bridge binding (only populated for 'bound' stores).
   private transport: WebSocketTransport | null = null;
-  private boundDeviceId: string | null = null;
-  private boundPublishedId: string | null = null;
+  private boundGuid: string | null = null;
+  private boundServerid: string | null = null;
   private unsubMessage?: () => void;
   private unsubClose?: () => void;
 
@@ -75,55 +84,43 @@ export class DeviceSvelte {
   async bind(
       t: WebSocketTransport,
       opts: {
-        deviceId: string;
-        publishedId: string;
-        deviceGuid: string;
+        guid: string;
+        serverid: string;
         productName: string;
         kind: 'hid' | 'mock';
       },
   ): Promise<void> {
-    dlog('bind START', opts.deviceId, opts.publishedId);
+    this.role = 'bound';
+    dlog('bind START', opts.guid, opts.serverid);
     this.transport = t;
-    this.boundDeviceId = opts.deviceId;
-    this.boundPublishedId = opts.publishedId;
-    this.deviceGuid = opts.deviceGuid;
+    this.boundGuid = opts.guid;
+    this.boundServerid = opts.serverid;
+    this.guid = opts.guid;
+    this.serverid = opts.serverid;
     this.productName = opts.productName;
     this.connected = true;
     this.error = "";
 
-    // Subscribe this device on the shared socket.
-    t.send(JSON.stringify({ type: 'action', action: 'subscribe', deviceId: opts.deviceId }));
+    t.send(JSON.stringify({ type: 'action', action: 'subscribe', guid: opts.guid }));
 
-    // Typed message fan-out — filter to our device inside the handler.
     this.unsubMessage = t.onMessage((msg) => this.#handleBridgeMessage(msg as any));
     this.unsubClose = t.onCloseListener(() => {
       this.connected = false;
       this.transport = null;
       this.dsp = null;
-      this.boundDeviceId = null;
-      this.boundPublishedId = null;
+      this.boundGuid = null;
+      this.boundServerid = null;
     });
 
-    // A real Dsp bound to this transport + deviceId. Every commit() path now
-    // has a valid dsp and the transport filters replies by deviceId.
-    this.dsp = new Dsp(t, opts.deviceId);
-
-    dlog('bind: Dsp created', 'deviceId=' + opts.deviceId);
+    this.dsp = new Dsp(t, opts.guid);
+    dlog('bind: Dsp created', 'guid=' + opts.guid);
 
     queueMicrotask(() => {
-      console.log('[device] bind: starting hydration for', opts.deviceId);
-      // Hydrate device state from hardware on connect - this is the source of truth
-      // Save to localStorage after hydration completes
+      console.log('[device] bind: starting hydration for', opts.guid);
       this._ready = this.hydrate()
           .then(() => {
-            console.log('[device] bind: hydration complete, saving to localStorage');
-            // Save the fresh device state to localStorage after hydration
-            try {
-              this.saveDeviceState();
-              console.log('[device] channels after save:', this.channels.length, 'channels, first channel name:', this.channels[0]?.name);
-            } catch (e) {
-              console.error('saveDeviceState failed:', e);
-            }
+            console.log('[device] bind: hydration complete');
+            try { this.saveDeviceState(); } catch (e) { console.error('saveDeviceState failed:', e); }
           })
           .catch((e) => {
             console.error('initial hydrate failed:', e);
@@ -135,12 +132,10 @@ export class DeviceSvelte {
   async unbind(): Promise<void> {
     if (!this.transport) return;
 
-    if (this.boundDeviceId) {
+    if (this.boundGuid) {
       try {
         this.transport.send(JSON.stringify({
-          type: 'action',
-          action: 'unsubscribe',
-          deviceId: this.boundDeviceId,
+          type: 'action', action: 'unsubscribe', guid: this.boundGuid,
         }));
       } catch { /* socket may already be closing */ }
     }
@@ -148,19 +143,18 @@ export class DeviceSvelte {
     this.unsubMessage?.(); this.unsubMessage = undefined;
     this.unsubClose?.();   this.unsubClose   = undefined;
 
-    // Do NOT close the transport — it is shared by every device on the server.
     this.dsp = null;
     this.transport = null;
-    this.boundDeviceId = null;
-    this.boundPublishedId = null;
+    this.boundGuid = null;
+    this.boundServerid = null;
     this.connected = false;
   }
 
   #handleBridgeMessage(msg: any): void {
     if (!msg || typeof msg !== 'object') return;
-    const isOurs = msg.deviceId === this.boundDeviceId || msg.publishedId === this.boundPublishedId;
-    dlog('msg', msg.type, 'deviceId=' + (msg.deviceId ?? '-'),
-        'bound=' + (this.boundDeviceId ?? '-'),
+    const isOurs = msg.guid === this.boundGuid && msg.serverid === this.boundServerid;
+    dlog('msg', msg.type, 'guid=' + (msg.guid ?? '-'),
+        'serverid=' + (msg.serverid ?? '-'),
         'isOurs=' + isOurs);
     if (!isOurs) return;
 
@@ -174,7 +168,28 @@ export class DeviceSvelte {
     }
   }
 
-  // --- hydrate (read device state into this store) ----------------------
+  // --- adopt from another store (used for first-connect mirror) ---------
+
+  adoptFrom(other: typeof device): void {
+    this.channels = other.channels.map(ch => ({
+      ...ch,
+      eq: ch.eq ? {
+        bands: ch.eq.bands.map(b => ({ ...b })),
+        hpf: { ...ch.eq.hpf },
+        lpf: { ...ch.eq.lpf },
+      } : undefined,
+      comp: ch.comp ? { ...ch.comp } : undefined,
+      gate: ch.gate ? { ...ch.gate } : undefined,
+    }));
+    this.routing = [...other.routing];
+    this.eqLink = { ...other.eqLink };
+    this.presetName = other.presetName;
+    this.activePreset = other.activePreset;
+    this.lastReadback = other.lastReadback;
+    this.hasDefaults = other.hasDefaults;
+  }
+
+  // --- hydrate ----------------------------------------------------------
 
   private async hydrate(): Promise<void> {
     if (!this.dsp) { dlog('hydrate SKIP: no dsp'); return; }
@@ -195,7 +210,6 @@ export class DeviceSvelte {
     this.lastReadback = pr;
     this.presetName = pr.presetName;
 
-    // Update input channels
     const newChannels = [...this.channels];
     pr.inputs.forEach((c, i) => {
       if (!newChannels[i]) return;
@@ -210,7 +224,6 @@ export class DeviceSvelte {
       };
     });
 
-    // Update output channels
     const newRouting = [...this.routing];
     pr.outputs.forEach((c, i) => {
       const idx = OUT_BASE + i;
@@ -241,12 +254,9 @@ export class DeviceSvelte {
       }
     });
 
-    // Assign back to trigger reactivity
-    dlog('hydrate: assigning new channels (length=' + newChannels.length + ')');
     this.channels = newChannels;
     this.routing = newRouting;
     console.log('[device] hydrate complete - channels:', this.channels.map(c => ({ name: c.name, gainDb: c.gainDb })));
-    console.log('[device] channels array reference check:', this.channels === newChannels ? 'SAME' : 'DIFFERENT');
   }
 
   // --- debounced commit -------------------------------------------------
@@ -256,6 +266,16 @@ export class DeviceSvelte {
     if (prev) clearTimeout(prev);
     this.timers.set(key, setTimeout(() => {
       this.timers.delete(key);
+
+      if (this.role === 'ui') {
+        // Canonical model: no local hardware. The set* method already called
+        // deviceManager.broadcast* which pushes to every bound shadow.
+        this.saveDeviceState();
+        this.syncCurrentPreset();
+        return;
+      }
+
+      // Bound shadow: write to its own hardware.
       if (this.dsp) void Promise.resolve().then(fn).catch(() => {}).finally(() => {
         this.saveDeviceState();
         this.syncCurrentPreset();
@@ -267,7 +287,7 @@ export class DeviceSvelte {
 
   setGainDb(i: number, db: number): void {
     if ((globalThis as any).__devDebug) {
-      console.log('%c[dev]', 'color:#a08cc4', 'setGainDb', i, db);
+      console.log('%c[dev]', 'color:#a08cc4', 'setGainDb', i, db, 'role=' + this.role);
     }
     const ch = this.ch(i);
     ch.gainDb = db;
@@ -439,6 +459,11 @@ export class DeviceSvelte {
     await this.pushAll();
   }
 
+  /** Single persistent slot: the UI model is the only thing persisted. */
+  private stateKey(): string {
+    return "opendsp-device-state";
+  }
+
   saveDeviceState(): void {
     try {
       const deviceState = {
@@ -447,18 +472,20 @@ export class DeviceSvelte {
         presetName: this.presetName,
         activePreset: this.activePreset,
         eqLink: this.eqLink,
+        currentPresetId: this.currentPresetId,
       };
-      localStorage.setItem("opendsp-device-state", JSON.stringify(deviceState));
+      localStorage.setItem(this.stateKey(), JSON.stringify(deviceState));
     } catch (e) { console.error("Error saving device state:", e); }
   }
 
   async restoreDeviceState(): Promise<void> {
     let raw: string | null = null;
-    try { raw = localStorage.getItem("opendsp-device-state"); } catch { /* ignore */ }
+    try { raw = localStorage.getItem(this.stateKey()); } catch { /* ignore */ }
     if (!raw) return;
     const state = JSON.parse(raw) as {
       channels: Channel[]; routing: number[]; presetName?: string;
       activePreset?: number; eqLink?: Record<number, number>;
+      currentPresetId?: string | null;
     };
     this.channels = state.channels;
     while (this.channels.length < 8) {
@@ -468,10 +495,11 @@ export class DeviceSvelte {
     if (state.presetName !== undefined) this.presetName = state.presetName;
     if (state.activePreset !== undefined) this.activePreset = state.activePreset;
     if (state.eqLink !== undefined) this.eqLink = state.eqLink;
+    if (state.currentPresetId !== undefined) this.currentPresetId = state.currentPresetId;
   }
 
   clearDeviceState(): void {
-    try { localStorage.removeItem("opendsp-device-state"); }
+    try { localStorage.removeItem(this.stateKey()); }
     catch (e) { console.error("Error clearing device state:", e); }
   }
 
@@ -537,7 +565,7 @@ export class DeviceSvelte {
     try {
       const parsed = JSON.parse(jsonString);
       presetManager.importPreset(parsed);
-      if (applyToDevice && this.dsp) await this.applyLoadedPreset(parsed);
+      if (applyToDevice) await this.applyLoadedPreset(parsed);
     } catch (e) {
       console.error('Error loading preset:', e);
       throw new Error(`Invalid preset data: ${(e as Error).message}`);
@@ -545,82 +573,50 @@ export class DeviceSvelte {
   }
 
   async applyLoadedPreset(preset: any): Promise<void> {
-    if (!this.dsp) return;
-    this.stopMeters();
-    try {
-      if (Array.isArray(preset.device.routing)) {
-        this.routing = preset.device.routing;
-        for (let i = 0; i < preset.device.routing.length; i++) {
-          await this.dsp.routing(OUT_BASE + i, preset.device.routing[i]).catch(() => {});
-        }
-      }
-      if (preset.device.eqLink && typeof preset.device.eqLink === 'object') {
-        this.eqLink = { ...preset.device.eqLink };
-      }
-      if (Array.isArray(preset.device.channels)) {
-        for (let i = 0; i < preset.device.channels.length; i++) {
-          const savedCh = preset.device.channels[i];
-          if (!savedCh) continue;
-          const ch = this.ch(i);
-          if (typeof savedCh.gainDb === 'number') { ch.gainDb = savedCh.gainDb; await this.dsp.setLevelDb(i, savedCh.gainDb).catch(() => {}); }
-          if (typeof savedCh.mute === 'boolean') { ch.mute = savedCh.mute; await this.dsp.mute(i, savedCh.mute).catch(() => {}); }
-          if (typeof savedCh.polarity === 'boolean') { ch.polarity = savedCh.polarity; await this.dsp.setPolarity(i, savedCh.polarity).catch(() => {}); }
-          if (ch.isOutput) {
-            if (savedCh.delayMs !== undefined) { ch.delayMs = savedCh.delayMs; await this.dsp.delayMs(i, savedCh.delayMs).catch(() => {}); }
-            if (savedCh.comp) { ch.comp = { ...savedCh.comp }; await this.dsp.compressor(i, savedCh.comp).catch(() => {}); }
-            if (savedCh.eq) {
-              ch.eq = {
-                bands: savedCh.eq.bands.map((b: any) => ({ ...b })),
-                hpf: { freqHz: savedCh.eq.hpf.freqHz, slope: savedCh.eq.hpf.slope },
-                lpf: { freqHz: savedCh.eq.lpf.freqHz, slope: savedCh.eq.lpf.slope },
-              };
-              if (savedCh.eq.hpf) await this.dsp.crossoverHpf(i, this.cal.xoverHzToRaw(savedCh.eq.hpf.freqHz), savedCh.eq.hpf.slope).catch(() => {});
-              if (savedCh.eq.lpf) await this.dsp.crossoverLpf(i, this.cal.xoverHzToRaw(savedCh.eq.lpf.freqHz), savedCh.eq.lpf.slope).catch(() => {});
-              if (Array.isArray(savedCh.eq.bands)) {
-                for (let band = 0; band < savedCh.eq.bands.length; band++) {
-                  const savedBand = savedCh.eq.bands[band];
-                  if (!savedBand) continue;
-                  ch.eq!.bands[band] = { ...savedBand };
-                  await this.dsp.peqBand(i, band, {
-                    freqHz: savedBand.freqHz,
-                    q: this.cal.bwOctToQ(savedBand.bwOct, savedBand.freqHz),
-                    gainRaw: this.cal.peqGainDbToRaw(savedBand.gainDb, savedBand.type),
-                    type: savedBand.type,
-                    bypass: savedBand.bypass,
-                  }).catch(() => {});
-                }
-              }
-            }
-          } else if (savedCh.gate) {
-            ch.gate = { ...savedCh.gate };
-            await this.dsp.gate(i, savedCh.gate).catch(() => {});
-          }
-        }
-      }
-      if (typeof preset.device.activePreset === 'number') {
-        this.activePreset = preset.device.activePreset;
-      }
-    } finally {
-      this.startMeters();
+    // 1) Write into this store (the UI model).
+    if (Array.isArray(preset.device.routing)) {
+      this.routing = [...preset.device.routing];
     }
+    if (preset.device.eqLink && typeof preset.device.eqLink === 'object') {
+      this.eqLink = { ...preset.device.eqLink };
+    }
+    if (Array.isArray(preset.device.channels)) {
+      const next = this.channels.slice();
+      for (let i = 0; i < preset.device.channels.length; i++) {
+        const savedCh = preset.device.channels[i];
+        if (!savedCh) continue;
+        while (next.length <= i) next.push(defaultChannel(next.length));
+        next[i] = {
+          ...next[i]!,
+          gainDb: savedCh.gainDb ?? next[i]!.gainDb,
+          mute: savedCh.mute ?? next[i]!.mute,
+          polarity: savedCh.polarity ?? next[i]!.polarity,
+          delayMs: savedCh.delayMs ?? next[i]!.delayMs,
+          comp: savedCh.comp ? { ...savedCh.comp } : next[i]!.comp,
+          gate: savedCh.gate ? { ...savedCh.gate } : next[i]!.gate,
+          eq: savedCh.eq ? {
+            bands: savedCh.eq.bands.map((b: any) => ({ ...b })),
+            hpf: { freqHz: savedCh.eq.hpf.freqHz, slope: savedCh.eq.hpf.slope },
+            lpf: { freqHz: savedCh.eq.lpf.freqHz, slope: savedCh.eq.lpf.slope },
+          } : next[i]!.eq,
+        };
+      }
+      this.channels = next;
+    }
+    if (typeof preset.device.activePreset === 'number') {
+      this.activePreset = preset.device.activePreset;
+    }
+    this.saveDeviceState();
+
+    // 2) Push the new UI model to every bound shadow's hardware.
+    await deviceManager.pushFullConfigToAllFrom(this);
   }
 
   async loadSavedPresetFromStorage(index: number): Promise<void> {
     const preset = presetManager.loadPreset(index);
     if (!preset) return;
     this.currentPresetId = preset.id;
-    this.channels = preset.device.channels;
-    while (this.channels.length < 8) {
-      this.channels = [...this.channels, defaultChannel(this.channels.length)];
-    }
-    this.routing = preset.device.routing;
-    this.eqLink = { ...preset.device.eqLink };
-    this.activePreset = preset.device.activePreset;
-    this.saveDeviceState();
-    if (this.dsp) {
-      try { await this.applyLoadedPreset(preset); }
-      catch (err) { console.error("Error applying preset to device:", err); }
-    }
+    await this.applyLoadedPreset(preset);
   }
 
   saveCurrentPresetToStorage(name: string): void {
@@ -696,7 +692,6 @@ export class DeviceSvelte {
 
   private syncCurrentPreset(): void {
     if (!this.currentPresetId) return;
-    // If the tracked preset was deleted from the list, clear the pointer.
     const idx = presetManager.findPresetIndexById(this.currentPresetId);
     if (idx < 0) {
       this.currentPresetId = null;
@@ -730,7 +725,6 @@ export class DeviceSvelte {
   }
 
   listPresets() {
-    // Read-only; safe for all devices.
     return presetManager.getPresets();
   }
 
@@ -765,4 +759,9 @@ export class DeviceSvelte {
   }
 }
 
+/**
+ * The canonical UI model. UI components import this and read/write it directly.
+ * It never holds a `dsp` — hardware lives in the 'bound' shadows that the
+ * picker creates.
+ */
 export const device = new DeviceSvelte();

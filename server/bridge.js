@@ -1,24 +1,19 @@
 // WebSocket to USB HID bridge for openDSP-4x4 — multi-device
 // No master/slave logic; leadership is decided by the UI.
-// Supports N HID devices and N mock devices.
 //
-// Identifier model:
-//   SERVER_ID  = 5-char alphanumeric server id (e.g. "Q7X2K")
-//   device.guid= "DSP" + 5-char alphanumeric (e.g. "DSP7C4H9")
-//   device.publishedId = SERVER_ID + "-" + device.guid  (e.g. "Q7X2K-DSP7C4H9")
+// Identifiers:
+//   SERVER_ID = 5-char alphanumeric server id (e.g. "Q7X2K")
+//   guid      = "DSP" + 5-char alphanumeric (e.g. "DSP7C4H9")
+//   serverid  = SERVER_ID  (just the server identity; same for every device)
 //
-// SERVER_ID and per-device GUIDs are PERSISTED to disk, so they survive
-// restarts. This makes `publishedId` stable across process lifetimes —
-// a UI can remember a device by its publishedId and expect it to refer
-// to the same physical device (HID path) or mock slot on reconnect.
+// Every message carries both `guid` and `serverid`:
+//   - key devices by `guid` (unique within a server)
+//   - use `serverid` to know which bridge the device belongs to
+//
+// SERVER_ID and per-slot GUIDs are PERSISTED to disk so they survive restarts.
 //
 // Mock devices obey the real protocol. Every reply is generated from
-// device.settings using the same unit conversions as the client
-// (protocol/blocks.ts, protocol/control.ts, protocol/readback.ts),
-// so writes → readback is a faithful round-trip.
-//
-// DEBUG_FRAMES=true (default) logs every inbound request and outbound
-// reply as a full 64-byte hex frame, prefixed [TX] / [RX] / [MOCK-RX].
+// device.settings using the same unit conversions as the client.
 
 import { createServer } from 'node:http';
 import { readFile, mkdir, writeFile, rename } from 'node:fs/promises';
@@ -36,14 +31,13 @@ const VENDOR_ID = 0x0168;
 const PRODUCT_ID = 0x0821;
 const MAX_LOGS = 200;
 const PORT = Number(process.env.PORT) || 8765;
-const MOCK_DEVICE_COUNT = Math.max(1, Number(process.env.MOCK_DEVICES) || 4);
+const MOCK_DEVICE_COUNT = Math.max(1, Number(process.env.MOCK_DEVICES) || 1);
 const PUBLIC_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'public');
 
 const BIND_HOST = process.env.BRIDGE_HOST || '127.0.0.1';
 const MAX_WS_PAYLOAD = 64 * 1024;
 const MAX_HID_REPORT_BYTES = 64;
 
-// Verbose hex frame logging. On by default so you can paste captures here.
 const DEBUG_FRAMES = process.env.DEBUG_FRAMES !== 'false';
 
 const STATE_DIR = process.env.BRIDGE_STATE_DIR
@@ -53,38 +47,20 @@ const STATE_FILE = join(STATE_DIR, 'registry.json');
 let mockMode = process.env.MOCK_MODE === 'true';
 
 // ---------------------------------------------------------------------------
-// Protocol constants (must match src/protocol/commands.ts on the client)
+// Protocol constants
 // ---------------------------------------------------------------------------
 
 const DLE = 0x10, STX = 0x02, ETX = 0x03;
 const REQUEST_ADDR = 0x01;
 
 const Command = {
-    GET_STATUS: 0x10,
-    INIT_DONE: 0x12,
-    GET_VERSION: 0x13,
-    GET_FLAG: 0x14,
-    GET_FLAGS_BLOCK: 0x22,
-    READ_CHANNEL: 0x27,
-    READ_PRESET_NAME: 0x29,
-    GET_CONFIG: 0x2c,
-    REPLY_CHANNEL: 0x24,
-    RECALL_PRESET: 0x20,
-    STORE_PRESET: 0x21,
-    SET_NAME: 0x26,
-    SET_PASSWORD: 0x2f,
-    TEST_TONE: 0x39,
-    COMPRESSOR: 0x30,
-    CROSSOVER_LPF: 0x31,
-    CROSSOVER_HPF: 0x32,
-    PEQ_BAND: 0x33,
-    LEVEL: 0x34,
-    MUTE: 0x35,
-    POLARITY: 0x36,
-    DELAY: 0x38,
-    GATE: 0x3e,
-    ROUTING: 0x3a,
-    READBACK_LEVELS: 0x40,
+    GET_STATUS: 0x10, INIT_DONE: 0x12, GET_VERSION: 0x13, GET_FLAG: 0x14,
+    GET_FLAGS_BLOCK: 0x22, READ_CHANNEL: 0x27, READ_PRESET_NAME: 0x29,
+    GET_CONFIG: 0x2c, REPLY_CHANNEL: 0x24, RECALL_PRESET: 0x20,
+    STORE_PRESET: 0x21, SET_NAME: 0x26, SET_PASSWORD: 0x2f, TEST_TONE: 0x39,
+    COMPRESSOR: 0x30, CROSSOVER_LPF: 0x31, CROSSOVER_HPF: 0x32,
+    PEQ_BAND: 0x33, LEVEL: 0x34, MUTE: 0x35, POLARITY: 0x36,
+    DELAY: 0x38, GATE: 0x3e, ROUTING: 0x3a, READBACK_LEVELS: 0x40,
     GET_VERSION_FW: 0x52,
 };
 
@@ -117,7 +93,7 @@ const CH_IN_A = 0x00, CH_IN_B = 0x01, CH_IN_C = 0x02, CH_IN_D = 0x03;
 const CH_OUT_1 = 0x04, CH_OUT_2 = 0x05, CH_OUT_3 = 0x06, CH_OUT_4 = 0x07;
 
 // ---------------------------------------------------------------------------
-// Protocol helpers (mirror src/protocol/frame.ts + blocks.ts + control.ts)
+// Frame helpers
 // ---------------------------------------------------------------------------
 
 function frameChecksum(payload) {
@@ -147,7 +123,7 @@ function parseRequest(bytes) {
 }
 
 // ---------------------------------------------------------------------------
-// Unit conversions (mirror src/protocol/blocks.ts + control.ts)
+// Unit conversions
 // ---------------------------------------------------------------------------
 
 const GAIN_ZERO_DB = 281;
@@ -155,16 +131,12 @@ const GAIN_UNITS_PER_DB = 10;
 const GAIN_MAX_RAW = 400;
 const gainDbToRaw = (db) => Math.max(0, Math.min(GAIN_MAX_RAW, Math.round(GAIN_ZERO_DB + db * GAIN_UNITS_PER_DB)));
 const gainRawToDb = (raw) => (raw - GAIN_ZERO_DB) / GAIN_UNITS_PER_DB;
-
 const thresholdDbToRaw = (db) => Math.round((db + 90) * 2);
 const thresholdRawToDb = (raw) => raw / 2 - 90;
-
 const msToSamples = (ms) => Math.max(0, Math.min(32640, Math.round(ms * 48)));
 const samplesToMs = (s) => s / 48;
-
 const hzToPeqIndex = (hz) => Math.max(0, Math.min(300, Math.round(30 * Math.log2(hz / 19.7))));
 const peqIndexToHz = (i) => 19.7 * Math.pow(2, i / 30);
-
 const qToRaw = (q) => Math.max(0, Math.min(255, Math.round(q * 10)));
 const rawToQ = (raw) => raw / 10;
 
@@ -181,7 +153,7 @@ function randomId(len) {
     return out;
 }
 
-const persistedState = { serverId: null, deviceGuids: {} };
+const persistedState = { serverId: null, guids: {} };
 
 async function loadState() {
     try {
@@ -190,10 +162,10 @@ async function loadState() {
         if (typeof parsed.serverId === 'string' && /^[A-Z0-9]{5}$/.test(parsed.serverId)) {
             persistedState.serverId = parsed.serverId;
         }
-        if (parsed.deviceGuids && typeof parsed.deviceGuids === 'object') {
-            for (const [k, v] of Object.entries(parsed.deviceGuids)) {
+        if (parsed.guids && typeof parsed.guids === 'object') {
+            for (const [k, v] of Object.entries(parsed.guids)) {
                 if (typeof v === 'string' && /^DSP[A-Z0-9]{5}$/.test(v)) {
-                    persistedState.deviceGuids[k] = v;
+                    persistedState.guids[k] = v;
                 }
             }
         }
@@ -226,19 +198,24 @@ if (!persistedState.serverId) {
 }
 const SERVER_ID = persistedState.serverId;
 
-function ensureDeviceGuid(key) {
-    if (!persistedState.deviceGuids[key]) {
-        persistedState.deviceGuids[key] = 'DSP' + randomId(5);
+/**
+ * Return the persisted GUID for a given hidPath, generating and persisting
+ * one if needed. `hidPath` is the OS HID path for physical devices, or
+ * "mock-hid-path-N" for mocks. If null, a fresh random path is created
+ * (only used for one-off debug callers; real call sites always pass one).
+ */
+function ensureDeviceGuid(hidPath = null) {
+    if (!hidPath) hidPath = 'anon-' + randomId(8);
+    if (!persistedState.guids[hidPath]) {
+        persistedState.guids[hidPath] = 'DSP' + randomId(5);
         scheduleStateSave();
     }
-    return persistedState.deviceGuids[key];
+    return persistedState.guids[hidPath];
 }
 
-function publishedId(guid) { return `${SERVER_ID}-${guid}`; }
-
 function getAllDeviceGuids() {
-    return Object.entries(persistedState.deviceGuids).map(([key, guid]) => ({
-        key, guid, publishedId: publishedId(guid),
+    return Object.entries(persistedState.guids).map(([key, guid]) => ({
+        key, guid, serverid: SERVER_ID,
     }));
 }
 
@@ -261,7 +238,7 @@ function listHidDevices() {
 }
 
 // ---------------------------------------------------------------------------
-// Logs + hex frame dumps
+// Logs
 // ---------------------------------------------------------------------------
 
 const connectionLogs = [];
@@ -270,22 +247,15 @@ const messageLogs = [];
 function bytesToHex(bytes) {
     return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(' ');
 }
-
-// Compact dump: return the first `n` bytes plus "…" if truncated.
 function hexDump(bytes, n = 64) {
     const arr = Array.from(bytes);
     const head = arr.slice(0, n).map(b => b.toString(16).padStart(2, '0')).join(' ');
     return arr.length > n ? `${head} …(${arr.length} bytes)` : head;
 }
 
-// Verbose frame log: direction + device tag + full hex.
-// direction: "TX" (host→device: what the client sent), "RX" (device→host: mock reply),
-//            "HID-RX" (device→host: real HID report), "HID-TX" (host→device: real HID write).
 function logFrame(direction, device, bytes, extra) {
     if (!DEBUG_FRAMES) return;
-    const id = device ? (device.id ?? '?') : '?';
-    const guid = device ? (device.deviceGuid ?? '?') : '?';
-    const tag = `[${direction}] ${id} (${guid})`;
+    const tag = `[${direction}] ${device.serverid}/${device.guid}`;
     const parsed = parseRequest(Array.from(bytes));
     const meta = parsed
         ? `code=0x${parsed.code.toString(16).padStart(2, '0')} (${cmdName(parsed.code)}) N=${parsed.payload[2] ?? '?'} data=${parsed.data.length}B`
@@ -362,9 +332,7 @@ function defaultChannelFor(i) {
     return {
         index: i,
         name: isOutput ? OUT_NAMES[i - 4] : IN_NAMES[i],
-        gainDb: 0,
-        mute: false,
-        polarity: false,
+        gainDb: 0, mute: false, polarity: false,
         delayMs: isOutput ? 0 : null,
         eq: isOutput ? {
             hpf: { freqHz: 20, slopeCode: Slope.BYPASS },
@@ -384,7 +352,6 @@ function defaultSettings() {
         routing: [0x01, 0x02, 0x04, 0x08],
     };
 }
-
 function randDb(lo = -24, hi = 6) { return Math.round((lo + Math.random() * (hi - lo)) * 10) / 10; }
 function randomBand(idx) {
     const anchors = [40, 90, 200, 500, 1200, 3500, 9000];
@@ -407,28 +374,20 @@ function randomRoutingMask() {
     return mask === 0 ? 0x01 : mask;
 }
 const SLOPE_CODES = [Slope.BW12, Slope.BW24, Slope.BL12, Slope.BL24];
-
 function generateRandomSettings() {
     const channels = Array.from({ length: 8 }, (_, i) => {
         const isOutput = i >= 4;
         const names = isOutput ? RANDOM_OUT_NAMES : RANDOM_IN_NAMES;
         const name = names[i % names.length] ?? `Ch ${i}`;
         return {
-            index: i,
-            name,
+            index: i, name,
             gainDb: randDb(-24, 6),
             mute: Math.random() < 0.1,
             polarity: Math.random() < 0.05,
             delayMs: isOutput ? Math.round(Math.random() * 300) / 10 : null,
             eq: isOutput ? {
-                hpf: {
-                    freqHz: [20, 40, 60, 80, 100, 120][Math.floor(Math.random() * 6)],
-                    slopeCode: SLOPE_CODES[Math.floor(Math.random() * SLOPE_CODES.length)],
-                },
-                lpf: {
-                    freqHz: [8000, 12000, 16000, 20000][Math.floor(Math.random() * 4)],
-                    slopeCode: SLOPE_CODES[Math.floor(Math.random() * SLOPE_CODES.length)],
-                },
+                hpf: { freqHz: [20, 40, 60, 80, 100, 120][Math.floor(Math.random() * 6)], slopeCode: SLOPE_CODES[Math.floor(Math.random() * SLOPE_CODES.length)] },
+                lpf: { freqHz: [8000, 12000, 16000, 20000][Math.floor(Math.random() * 4)], slopeCode: SLOPE_CODES[Math.floor(Math.random() * SLOPE_CODES.length)] },
                 bands: Array.from({ length: 7 }, (_, b) => randomBand(b)),
             } : undefined,
             comp: isOutput ? {
@@ -454,8 +413,7 @@ function generateRandomSettings() {
 }
 
 // ---------------------------------------------------------------------------
-// Build the 450-byte preset image from device.settings.
-// Layout mirrors src/protocol/readback.ts exactly.
+// Preset image
 // ---------------------------------------------------------------------------
 
 function writeAscii(img, off, len, str) {
@@ -467,7 +425,6 @@ function writeU16(img, off, v) {
     img[off] = u & 0xff;
     img[off + 1] = (u >> 8) & 0xff;
 }
-
 function buildPresetImage(device) {
     const img = new Uint8Array(450);
     writeAscii(img, 2, 14, device.settings.presetName);
@@ -501,9 +458,7 @@ function buildPresetImage(device) {
 
         for (let band = 0; band < 7; band++) {
             const rec = b + 16 + band * 6;
-            const data = ch.eq?.bands?.[band] ?? {
-                type: PeqType.PEAK, freqHz: 1000, gainDb: 0, q: 1, bypass: true,
-            };
+            const data = ch.eq?.bands?.[band] ?? { type: PeqType.PEAK, freqHz: 1000, gainDb: 0, q: 1, bypass: true };
             const gainRaw = Math.max(0, Math.min(240, Math.round(120 + (data.gainDb ?? 0) * 10)));
             writeU16(img, rec + 0, gainRaw);
             writeU16(img, rec + 2, hzToPeqIndex(data.freqHz));
@@ -522,27 +477,35 @@ function buildPresetImage(device) {
         img[b + 68] = ch.polarity ? 1 : 0;
         writeU16(img, b + 70, msToSamples(ch.delayMs ?? 0));
     }
-
     return img;
 }
 
 // ---------------------------------------------------------------------------
 // Device registry
 // ---------------------------------------------------------------------------
+//
+// `devices` is keyed by `guid`. `hidPathToGuid` tracks the HID path → guid
+// mapping so `scanAndSyncHidDevices` can find disappeared HID devices without
+// making `devices` a two-key map.
 
-const devices = new Map();
+const devices = new Map();          // guid -> record
+const hidPathToGuid = new Map();    // hidPath -> guid
 const openingPaths = new Set();
 
-function makeDeviceRecord({ id, kind, path, product, hidHandle = null, slotKey = null }) {
-    const key = slotKey || path || id;
-    const guid = ensureDeviceGuid(key);
+/**
+ * Create a device record.
+ *
+ * `hidPath` is the stable identity: OS HID path for physical units, or
+ * "mock-hid-path-N" for mocks. ensureDeviceGuid maps it to a persisted guid.
+ */
+function makeDeviceRecord({ hidPath, kind, path, product, hidHandle = null }) {
+    const guid = ensureDeviceGuid(hidPath);
     return {
-        id,
+        guid,
+        serverid: SERVER_ID,     // ← server identity, same for every device
         kind,
-        path,
+        path: path ?? hidPath,
         product: product || 'DSP 4x4',
-        deviceGuid: guid,
-        publishedId: publishedId(guid),
         hid: hidHandle,
         subscribers: new Set(),
         settings: kind === 'mock' ? generateRandomSettings() : defaultSettings(),
@@ -553,7 +516,7 @@ function makeDeviceRecord({ id, kind, path, product, hidHandle = null, slotKey =
 }
 
 // ---------------------------------------------------------------------------
-// Apply a write frame to device.settings (mirrors blocks.ts / control.ts)
+// applyWrite
 // ---------------------------------------------------------------------------
 
 function applyWrite(device, code, data) {
@@ -566,50 +529,71 @@ function applyWrite(device, code, data) {
         case Command.LEVEL: {
             if (!c) return false;
             const raw = data[1] | (data[2] << 8);
-            c.gainDb = gainRawToDb(raw);
+            const db = gainRawToDb(raw);
+            if (Math.abs((c.gainDb ?? 0) - db) < 0.01) return false;
+            c.gainDb = db;
             return true;
         }
         case Command.MUTE: {
             if (!c) return false;
-            c.mute = data[1] === 1;
+            const on = data[1] === 1;
+            if (c.mute === on) return false;
+            c.mute = on;
             return true;
         }
         case Command.POLARITY: {
             if (!c) return false;
-            c.polarity = data[1] === 1;
+            const inv = data[1] === 1;
+            if (c.polarity === inv) return false;
+            c.polarity = inv;
             return true;
         }
         case Command.DELAY: {
             if (!c) return false;
-            c.delayMs = samplesToMs(data[1] | (data[2] << 8));
+            const ms = samplesToMs(data[1] | (data[2] << 8));
+            if (c.delayMs === ms) return false;
+            c.delayMs = ms;
             return true;
         }
         case Command.ROUTING: {
             const outIdx = ch - CH_OUT_1;
-            if (outIdx >= 0 && outIdx < s.routing.length) s.routing[outIdx] = data[1] & 0x0f;
+            if (outIdx < 0 || outIdx >= s.routing.length) return false;
+            const mask = data[1] & 0x0f;
+            if (s.routing[outIdx] === mask) return false;
+            s.routing[outIdx] = mask;
             return true;
         }
         case Command.PEQ_BAND: {
             if (!c?.eq) return false;
             const rec = c.eq.bands[data[1] ?? 0];
-            if (!rec) return;
-            rec.gainDb = Math.round((((data[2] | (data[3] << 8)) - 120) / 10) * 10) / 10;
-            rec.freqHz = peqIndexToHz(data[4] | (data[5] << 8));
-            rec.q = rawToQ(data[6]);
-            rec.type = data[7];
-            rec.bypass = !!data[8];
+            if (!rec) return false;
+            const gainDb = Math.round((((data[2] | (data[3] << 8)) - 120) / 10) * 10) / 10;
+            const freqHz = peqIndexToHz(data[4] | (data[5] << 8));
+            const q = rawToQ(data[6]);
+            const type = data[7];
+            const bypass = !!data[8];
+            if (rec.gainDb === gainDb && rec.freqHz === freqHz && rec.q === q && rec.type === type && rec.bypass === bypass) {
+                return false;
+            }
+            rec.gainDb = gainDb; rec.freqHz = freqHz; rec.q = q; rec.type = type; rec.bypass = bypass;
             return true;
         }
         case Command.CROSSOVER_HPF: {
             if (!c?.eq) return false;
-            c.eq.hpf.freqHz = peqIndexToHz(data[1] | (data[2] << 8));
-            c.eq.hpf.slopeCode = data[3] ?? Slope.BYPASS;
+            const freqHz = peqIndexToHz(data[1] | (data[2] << 8));
+            const slopeCode = data[3] ?? Slope.BYPASS;
+            if (c.eq.hpf.freqHz === freqHz && c.eq.hpf.slopeCode === slopeCode) return false;
+            c.eq.hpf.freqHz = freqHz;
+            c.eq.hpf.slopeCode = slopeCode;
             return true;
         }
         case Command.CROSSOVER_LPF: {
             if (!c?.eq) return false;
-            c.eq.lpf.freqHz = peqIndexToHz(data[1] | (data[2] << 8));
-            c.eq.lpf.slopeCode = data[3] ?? Slope.BYPASS;
+            const freqHz = peqIndexToHz(data[1] | (data[2] << 8));
+            const slopeCode = data[3] ?? Slope.BYPASS;
+            if (c.eq.lpf.freqHz === freqHz && c.eq.lpf.slopeCode === slopeCode) return false;
+            c.eq.lpf.freqHz = freqHz;
+            c.eq.lpf.slopeCode = slopeCode;
             return true;
         }
         case Command.COMPRESSOR: {
@@ -631,11 +615,11 @@ function applyWrite(device, code, data) {
         }
         case Command.SET_NAME: {
             const str = String.fromCharCode(...data.slice(0, 14)).replace(/\0[\s\S]*$/, '').trim();
-            if (str) s.presetName = str;
-            return true;
+            if (str && str !== s.presetName) { s.presetName = str; return true; }
+            return false;
         }
 
-        // Read-only and no-op commands must return false.
+        // Read-only / no-op — never signal a state change.
         case Command.GET_STATUS:
         case Command.GET_VERSION:
         case Command.GET_FLAG:
@@ -648,31 +632,26 @@ function applyWrite(device, code, data) {
         case Command.STORE_PRESET:
         case Command.SET_PASSWORD:
         case Command.TEST_TONE:
-            return false;
-
         default:
             return false;
     }
 }
 
 // ---------------------------------------------------------------------------
-// Mock replies
+// mockReply
 // ---------------------------------------------------------------------------
 
 function mockReply(device, code, data) {
     switch (code) {
-        case Command.GET_STATUS:
-            return [0x01, 0x00, 0x02, 0x10, 0x1f];
-        case Command.INIT_DONE:
-            return [0x01, 0x00, 0x01, 0x01];
+        case Command.GET_STATUS: return [0x01, 0x00, 0x02, 0x10, 0x1f];
+        case Command.INIT_DONE:  return [0x01, 0x00, 0x01, 0x01];
         case Command.GET_VERSION: {
             const v = '4x4MINIPRO V010';
             const out = [0x01, 0x00, 0x01 + v.length, 0x52];
             for (let i = 0; i < v.length; i++) out.push(v.charCodeAt(i) & 0xff);
             return out;
         }
-        case Command.GET_FLAG:
-            return [0x01, 0x00, 0x02, 0x14, 0x00];
+        case Command.GET_FLAG: return [0x01, 0x00, 0x02, 0x14, 0x00];
         case Command.GET_FLAGS_BLOCK: {
             const out = [0x01, 0x00, 30 + 1, 0x22];
             for (let i = 0; i < 30; i++) out.push(0);
@@ -693,7 +672,6 @@ function mockReply(device, code, data) {
             const index = data[0] ?? 0;
             const img = buildPresetImage(device);
             const page = img.slice(index * 50, index * 50 + 50);
-            // N = 1 + data.length. data = [index, ...50 page bytes] → N = 52.
             const out = [0x01, 0x00, 52, Command.REPLY_CHANNEL, index];
             for (let i = 0; i < 50; i++) out.push(page[i] ?? 0);
             return out;
@@ -723,48 +701,35 @@ function mockReply(device, code, data) {
         case Command.COMPRESSOR:
         case Command.GATE:
             return [0x01, 0x00, 0x01, 0x01];
-        default:
-            return null;
+        default: return null;
     }
 }
 
 function handleMockWrite(device, bytes) {
     let parsed;
     try { parsed = parseRequest(bytes); }
-    catch (e) {
-        console.error(`parseRequest threw on ${device.id}:`, e.message);
-        return;
-    }
+    catch (e) { console.error(`parseRequest threw on ${device.guid}:`, e.message); return false; }
     if (!parsed) return false;
 
-    // Log the inbound request (host → device) before responding.
     logFrame('TX', device, bytes, `-> mock ${cmdName(parsed.code)} data=[${parsed.data.map(b => b.toString(16).padStart(2, '0')).join(' ')}]`);
 
     const changed = applyWrite(device, parsed.code, parsed.data);
 
     let reply;
     try { reply = mockReply(device, parsed.code, parsed.data); }
-    catch (e) {
-        console.error(`mockReply threw on ${device.id} for code 0x${parsed.code.toString(16)}:`, e.message);
-        return;
-    }
-    if (!reply) return;
+    catch (e) { console.error(`mockReply threw on ${device.guid} for code 0x${parsed.code.toString(16)}:`, e.message); return changed; }
+    if (!reply) return changed;
 
     let frame;
     try { frame = buildReplyFrame(reply); }
-    catch (e) {
-        console.error(`buildReplyFrame threw on ${device.id}:`, e.message);
-        return;
-    }
+    catch (e) { console.error(`buildReplyFrame threw on ${device.guid}:`, e.message); return changed; }
 
-    // Log the mock's response (device → host).
     logFrame('RX', device, frame, `<- mock reply to 0x${parsed.code.toString(16).padStart(2, '0')} (${cmdName(parsed.code)})`);
 
     addMessageLog({
         timestamp: new Date().toISOString(),
-        deviceId: device.id,
-        deviceGuid: device.deviceGuid,
-        publishedId: device.publishedId,
+        guid: device.guid,
+        serverid: device.serverid,
         type: 'mock_response',
         direction: 'outbound',
         payloadHex: bytesToHex(Array.from(frame)),
@@ -778,29 +743,28 @@ function handleMockWrite(device, bytes) {
 // ---------------------------------------------------------------------------
 
 function openHidDevice(hidPath) {
-    if (devices.has(hidPath)) return devices.get(hidPath);
+    const existingGuid = hidPathToGuid.get(hidPath);
+    if (existingGuid && devices.has(existingGuid)) return devices.get(existingGuid);
     if (openingPaths.has(hidPath)) return null;
     openingPaths.add(hidPath);
 
     let handle;
-    try {
-        handle = new NodeHid.HID(hidPath);
-    } catch (e) {
+    try { handle = new NodeHid.HID(hidPath); }
+    catch (e) {
         openingPaths.delete(hidPath);
         console.warn(`Failed to open HID ${hidPath}:`, e.message);
         return null;
     }
 
     const rec = makeDeviceRecord({
-        id: hidPath,
+        hidPath,
         kind: 'hid',
-        path: hidPath,
         product: handle.product || 'DSP 4x4 Mini Pro',
         hidHandle: handle,
-        slotKey: hidPath,
     });
 
-    devices.set(hidPath, rec);
+    devices.set(rec.guid, rec);
+    hidPathToGuid.set(hidPath, rec.guid);
     openingPaths.delete(hidPath);
 
     handle.on('data', (buf) => {
@@ -808,37 +772,36 @@ function openHidDevice(hidPath) {
         logFrame('HID-RX', rec, bytes, 'from physical device');
         emitReportFromDevice(rec, bytes);
     });
-
     handle.on('error', (err) => {
         console.error(`HID ${hidPath} error:`, err.message);
-        closeDevice(hidPath);
+        closeDevice(rec.guid);
     });
 
-    console.log(`Opened HID ${hidPath} → ${rec.publishedId}`);
+    console.log(`Opened HID ${hidPath} → ${rec.guid} (${rec.serverid})`);
     notifyDevicesChanged();
     return rec;
 }
 
-function closeDevice(deviceId) {
-    const rec = devices.get(deviceId);
+function closeDevice(guid) {
+    const rec = devices.get(guid);
     if (!rec || rec.closing) return;
     rec.closing = true;
-    devices.delete(deviceId);
+    devices.delete(guid);
+    if (rec.path && hidPathToGuid.get(rec.path) === guid) hidPathToGuid.delete(rec.path);
 
     if (rec.hid) { try { rec.hid.close(); } catch {} }
 
     const goneMsg = JSON.stringify({
         type: 'device_gone',
-        deviceId: rec.id,
-        deviceGuid: rec.deviceGuid,
-        publishedId: rec.publishedId,
+        guid: rec.guid,
+        serverid: rec.serverid,
     });
     for (const ws of rec.subscribers) {
         try { if (ws.readyState === WebSocket.OPEN) ws.send(goneMsg); } catch {}
     }
     rec.subscribers.clear();
 
-    console.log(`Closed ${deviceId}`);
+    console.log(`Closed ${guid}`);
     notifyDevicesChanged();
 }
 
@@ -848,8 +811,8 @@ function scanAndSyncHidDevices() {
         seen.add(d.path);
         openHidDevice(d.path);
     }
-    for (const [id, rec] of devices) {
-        if (rec.kind === 'hid' && !seen.has(id)) closeDevice(id);
+    for (const [hidPath, guid] of [...hidPathToGuid]) {
+        if (!seen.has(hidPath)) closeDevice(guid);
     }
 }
 
@@ -857,32 +820,44 @@ function scanAndSyncHidDevices() {
 // Mock device management
 // ---------------------------------------------------------------------------
 
-function nextMockSlot() {
-    let n = 1;
-    while (devices.has(`mock-device-${n}`)) n++;
-    return n;
+/**
+ * Find the lowest unused mock HID path. The path is the mock's stable
+ * identity, analogous to the OS HID path for physical units. The
+ * `persistedState.guids` check ensures a path is allocated at most once, so a
+ * mock's guid (and therefore its identity) survives restarts and remove+add
+ * cycles. If you want slot reuse instead, drop the `used` set.
+ */
+function nextMockHidPath() {
+    const used = new Set(
+        Object.keys(persistedState.guids).filter(k => k.startsWith('mock-hid-path-'))
+    );
+    for (let n = 1; ; n++) {
+        const hidPath = `mock-hid-path-${n}`;
+        if (!used.has(hidPath) && ![...devices.values()].some(d => d.path === hidPath)) {
+            return hidPath;
+        }
+    }
 }
 
 function addMockDevice() {
-    const n = nextMockSlot();
-    const id = `mock-device-${n}`;
+    const hidPath = nextMockHidPath();
     const rec = makeDeviceRecord({
-        id,
+        hidPath,
         kind: 'mock',
-        path: id,
-        product: `DSP 4x4 Mini Pro (Mock ${n})`,
-        slotKey: id,
+        product: `DSP 4x4 Mini Pro (${hidPath})`,
     });
-    devices.set(id, rec);
-    console.log(`Added ${id} → ${rec.publishedId}`);
+    devices.set(rec.guid, rec);
+    console.log(`Added ${rec.guid} (${rec.serverid}) @ ${hidPath}`);
     notifyDevicesChanged();
     return rec;
 }
 
-function removeMockDevice(id) {
-    const rec = devices.get(id);
+function removeMockDevice(ref) {
+    const guid = resolveGuid(ref);
+    if (!guid) return false;
+    const rec = devices.get(guid);
     if (!rec || rec.kind !== 'mock') return false;
-    closeDevice(id);
+    closeDevice(guid);
     return true;
 }
 
@@ -893,8 +868,8 @@ function spawnMockDevices() {
 }
 
 function removeMockDevices() {
-    for (const [id, rec] of [...devices]) {
-        if (rec.kind === 'mock') closeDevice(id);
+    for (const [guid, rec] of [...devices]) {
+        if (rec.kind === 'mock') closeDevice(guid);
     }
 }
 
@@ -909,9 +884,8 @@ function emitReportFromDevice(device, reportBytes) {
             device._lastIdleLogAt = now;
             addMessageLog({
                 timestamp: new Date().toISOString(),
-                deviceId: device.id,
-                deviceGuid: device.deviceGuid,
-                publishedId: device.publishedId,
+                guid: device.guid,
+                serverid: device.serverid,
                 type: 'report',
                 direction: 'outbound',
                 payload: b64encode(reportBytes),
@@ -924,9 +898,8 @@ function emitReportFromDevice(device, reportBytes) {
     const data = b64encode(reportBytes);
     addMessageLog({
         timestamp: new Date().toISOString(),
-        deviceId: device.id,
-        deviceGuid: device.deviceGuid,
-        publishedId: device.publishedId,
+        guid: device.guid,
+        serverid: device.serverid,
         type: 'report',
         direction: 'outbound',
         payload: data,
@@ -934,9 +907,8 @@ function emitReportFromDevice(device, reportBytes) {
 
     const msg = JSON.stringify({
         type: 'report',
-        deviceId: device.id,
-        deviceGuid: device.deviceGuid,
-        publishedId: device.publishedId,
+        guid: device.guid,
+        serverid: device.serverid,
         data,
     });
 
@@ -950,15 +922,14 @@ function emitReportFromDevice(device, reportBytes) {
 function sendBytesToDevice(device, bytes) {
     if (!Array.isArray(bytes) || bytes.length === 0) return false;
     if (bytes.length > MAX_HID_REPORT_BYTES) {
-        console.warn(`Rejecting ${bytes.length}-byte write to ${device.id} (max ${MAX_HID_REPORT_BYTES})`);
+        console.warn(`Rejecting ${bytes.length}-byte write to ${device.guid} (max ${MAX_HID_REPORT_BYTES})`);
         return false;
     }
 
     addMessageLog({
         timestamp: new Date().toISOString(),
-        deviceId: device.id,
-        deviceGuid: device.deviceGuid,
-        publishedId: device.publishedId,
+        guid: device.guid,
+        serverid: device.serverid,
         type: 'request',
         direction: 'inbound',
         payloadHex: bytesToHex(bytes),
@@ -969,11 +940,11 @@ function sendBytesToDevice(device, bytes) {
     let stateChanged = false;
 
     if (device.kind === 'mock') {
-        stateChanged = handleMockWrite(device, bytes);   // now returns whether state changed
+        stateChanged = handleMockWrite(device, bytes);
         ok = true;
     } else if (device.hid) {
         try { device.hid.write(new Uint8Array(bytes)); ok = true; }
-        catch (e) { closeDevice(device.id); return false; }
+        catch (e) { closeDevice(device.guid); return false; }
     } else {
         return false;
     }
@@ -986,9 +957,8 @@ function notifySettingsForDevice(device) {
     if (device.subscribers.size === 0) return;
     const msg = JSON.stringify({
         type: 'settings_update',
-        deviceId: device.id,
-        deviceGuid: device.deviceGuid,
-        publishedId: device.publishedId,
+        guid: device.guid,
+        serverid: device.serverid,
         timestamp: new Date().toISOString(),
         channels: device.settings.channels,
         routing: device.settings.routing,
@@ -1006,11 +976,10 @@ const devicesChangeSubscribers = new Set();
 
 function devicesSnapshot() {
     return [...devices.values()].map(d => ({
-        id: d.id,
+        guid: d.guid,
+        serverid: d.serverid,
         kind: d.kind,
         path: d.path,
-        deviceGuid: d.deviceGuid,
-        publishedId: d.publishedId,
         product: d.product,
         connectedAt: d.connectedAt,
         subscriberCount: d.subscribers.size,
@@ -1056,19 +1025,13 @@ async function serveStatic(res, name) {
         });
         res.end(data);
     } catch {
-        res.writeHead(404, {
-            'Content-Type': 'text/plain',
-            'Access-Control-Allow-Origin': '*'
-        });
+        res.writeHead(404, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
         res.end('Not found');
     }
 }
 
 function json(res, code, obj) {
-    res.writeHead(code, {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*'
-    });
+    res.writeHead(code, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end(JSON.stringify(obj));
 }
 
@@ -1082,9 +1045,7 @@ async function getLocalAddress() {
                 if (addr.family === 'IPv4' && !addr.internal) return addr.address;
             }
         }
-    } catch (e) {
-        console.warn('getLocalAddress failed:', e.message);
-    }
+    } catch (e) { console.warn('getLocalAddress failed:', e.message); }
     return '127.0.0.1';
 }
 
@@ -1097,7 +1058,6 @@ const httpServer = createServer(async (req, res) => {
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     res.setHeader('Access-Control-Max-Age', '86400');
-
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
     addConnectionLog({
@@ -1133,7 +1093,7 @@ const httpServer = createServer(async (req, res) => {
             bindHost: BIND_HOST,
             mockMode,
             mockDeviceCount: MOCK_DEVICE_COUNT,
-            deviceGuids: getAllDeviceGuids(),
+            guids: getAllDeviceGuids(),
             timestamp: new Date().toISOString(),
         });
     }
@@ -1144,14 +1104,14 @@ const httpServer = createServer(async (req, res) => {
             serverId: SERVER_ID,
             devices: devicesSnapshot().map(d => ({
                 ...d,
-                attached: d.kind === 'mock' || attached.has(d.id),
+                attached: d.kind === 'mock' || attached.has(d.path),
             })),
             hidAttached: [...attached],
         });
     }
 
     if (path === '/device-guids') {
-        return json(res, 200, { serverId: SERVER_ID, deviceGuids: getAllDeviceGuids() });
+        return json(res, 200, { serverId: SERVER_ID, guids: getAllDeviceGuids() });
     }
 
     if (path === '/servers') return json(res, 200, { servers: [] });
@@ -1177,20 +1137,25 @@ const httpServer = createServer(async (req, res) => {
                     process.env.MOCK_MODE = String(mockMode);
                     const rec = addMockDevice();
                     return json(res, 200, {
-                        message: `Added ${rec.id}`,
-                        added: rec.id,
-                        deviceGuid: rec.deviceGuid,
-                        publishedId: rec.publishedId,
+                        message: `Added ${rec.guid}`,
+                        guid: rec.guid,
+                        serverid: rec.serverid,
                         deviceCount: devices.size,
                     });
                 }
 
                 if (typeof body.remove === 'string') {
-                    const ok = removeMockDevice(body.remove);
-                    if (!ok) return json(res, 404, { message: `Not a mock device: ${body.remove}` });
+                    const targetGuid = resolveGuid(body.remove);
+                    if (!targetGuid) return json(res, 404, { message: `Unknown device: ${body.remove}` });
+                    const target = devices.get(targetGuid);
+                    if (!target || target.kind !== 'mock') {
+                        return json(res, 404, { message: `Not a mock device: ${body.remove}` });
+                    }
+                    closeDevice(targetGuid);
                     return json(res, 200, {
-                        message: `Removed ${body.remove}`,
-                        removed: body.remove,
+                        message: `Removed ${target.guid}`,
+                        guid: target.guid,
+                        serverid: target.serverid,
                         deviceCount: devices.size,
                     });
                 }
@@ -1266,16 +1231,31 @@ function getSubs(ws) {
     return s;
 }
 
-function subscribe(ws, deviceId) {
-    const device = devices.get(deviceId);
-    if (!device) return false;
+/**
+ * Accept a guid (or, for backwards compatibility, a "SERVER-guid" style ref)
+ * and return the guid, or null if unknown.
+ */
+function resolveGuid(ref) {
+    if (!ref || typeof ref !== 'string') return null;
+    if (devices.has(ref)) return ref;
+    const dash = ref.indexOf('-');
+    if (dash > 0) {
+        const maybeGuid = ref.slice(dash + 1);
+        if (devices.has(maybeGuid)) return maybeGuid;
+    }
+    return null;
+}
+
+function subscribe(ws, ref) {
+    const guid = resolveGuid(ref);
+    if (!guid) return false;
+    const device = devices.get(guid);
 
     if (device.subscribers.has(ws)) {
         sendToClient(ws, {
             type: 'subscribed',
-            deviceId: device.id,
-            deviceGuid: device.deviceGuid,
-            publishedId: device.publishedId,
+            guid: device.guid,
+            serverid: device.serverid,
             product: device.product,
             kind: device.kind,
             subscriberCount: device.subscribers.size,
@@ -1285,22 +1265,20 @@ function subscribe(ws, deviceId) {
     }
 
     device.subscribers.add(ws);
-    getSubs(ws).add(deviceId);
+    getSubs(ws).add(guid);
 
     sendToClient(ws, {
         type: 'subscribed',
-        deviceId: device.id,
-        deviceGuid: device.deviceGuid,
-        publishedId: device.publishedId,
+        guid: device.guid,
+        serverid: device.serverid,
         product: device.product,
         kind: device.kind,
         subscriberCount: device.subscribers.size,
     });
     sendToClient(ws, {
         type: 'settings_update',
-        deviceId: device.id,
-        deviceGuid: device.deviceGuid,
-        publishedId: device.publishedId,
+        guid: device.guid,
+        serverid: device.serverid,
         timestamp: new Date().toISOString(),
         channels: device.settings.channels,
         routing: device.settings.routing,
@@ -1310,15 +1288,15 @@ function subscribe(ws, deviceId) {
     return true;
 }
 
-function unsubscribe(ws, deviceId) {
-    const device = devices.get(deviceId);
+function unsubscribe(ws, ref) {
+    const guid = resolveGuid(ref);
+    const device = guid ? devices.get(guid) : null;
     if (device) device.subscribers.delete(ws);
-    getSubs(ws).delete(deviceId);
+    if (guid) getSubs(ws).delete(guid);
     sendToClient(ws, {
         type: 'unsubscribed',
-        deviceId,
-        deviceGuid: device ? device.deviceGuid : null,
-        publishedId: device ? device.publishedId : null,
+        guid: device ? device.guid : null,
+        serverid: device ? device.serverid : null,
         subscriberCount: device ? device.subscribers.size : null,
     });
     notifyDevicesChanged();
@@ -1339,8 +1317,8 @@ wss.on('connection', (ws, req) => {
             sendToClient(ws, {
                 type: 'error',
                 code: 'unknown_device',
-                message: `Unknown deviceId: ${autoDevice}`,
-                deviceId: autoDevice,
+                message: `Unknown guid: ${autoDevice}`,
+                ref: autoDevice,
             });
         }
     }
@@ -1354,6 +1332,9 @@ wss.on('connection', (ws, req) => {
             const msg = JSON.parse(text);
             if (!msg) return;
 
+            // Accept guid, serverid, or deviceId — all resolve to a guid.
+            const ref = msg.guid ?? msg.deviceId ?? null;
+
             if (msg.type === 'action') {
                 switch (msg.action) {
                     case 'list_devices':
@@ -1362,16 +1343,16 @@ wss.on('connection', (ws, req) => {
                             serverId: SERVER_ID,
                             devices: devicesSnapshot().map(d => ({
                                 ...d,
-                                subscribed: getSubs(ws).has(d.id),
+                                subscribed: getSubs(ws).has(d.guid),
                             })),
                         });
-                    case 'subscribe':   if (msg.deviceId) subscribe(ws, msg.deviceId);   return;
-                    case 'unsubscribe': if (msg.deviceId) unsubscribe(ws, msg.deviceId); return;
+                    case 'subscribe':   if (ref) subscribe(ws, ref);   return;
+                    case 'unsubscribe': if (ref) unsubscribe(ws, ref); return;
                     case 'subscribe_all':
-                        for (const id of devices.keys()) subscribe(ws, id);
+                        for (const guid of devices.keys()) subscribe(ws, guid);
                         return;
                     case 'unsubscribe_all':
-                        for (const id of [...getSubs(ws)]) unsubscribe(ws, id);
+                        for (const guid of [...getSubs(ws)]) unsubscribe(ws, guid);
                         return;
                 }
                 return;
@@ -1387,12 +1368,12 @@ wss.on('connection', (ws, req) => {
                     });
                 }
                 let targets = [];
-                if (msg.deviceId) {
-                    const dev = devices.get(msg.deviceId);
-                    if (dev) targets = [dev];
+                if (ref) {
+                    const guid = resolveGuid(ref);
+                    if (guid) targets = [devices.get(guid)];
                 } else {
-                    for (const id of getSubs(ws)) {
-                        const dev = devices.get(id);
+                    for (const guid of getSubs(ws)) {
+                        const dev = devices.get(guid);
                         if (dev) targets.push(dev);
                     }
                 }
@@ -1400,7 +1381,7 @@ wss.on('connection', (ws, req) => {
                     console.warn('No subscribed device for message — dropping');
                     return;
                 }
-                for (const dev of targets) sendBytesToDevice(dev, bytes);
+                for (const dev of targets) if (dev) sendBytesToDevice(dev, bytes);
             }
         } catch (e) {
             console.error('Error handling message:', e.message);
@@ -1454,7 +1435,7 @@ function shutdown() {
         writeFileSync(STATE_FILE, JSON.stringify(persistedState, null, 2));
     } catch { /* ignore */ }
 
-    for (const id of [...devices.keys()]) closeDevice(id);
+    for (const guid of [...devices.keys()]) closeDevice(guid);
 
     for (const ws of wss.clients) {
         try { ws.close(1001, 'server shutting down'); } catch {}

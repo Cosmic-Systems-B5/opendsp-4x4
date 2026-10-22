@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { serverManager } from "../state/server-manager.svelte.ts";
   import { deviceManager } from "../state/device-manager.svelte.ts";
-  import { device } from "../state/device.svelte.ts";
+  import { DeviceSvelte } from "../state/device.svelte.ts";
 
   let urls = $derived(serverManager.urls);
   let servers = $derived(serverManager.servers);
@@ -13,10 +13,10 @@
   function serverInfo(url: string)            { return servers[url]?.serverInfo; }
   function serverDevices(url: string)         { return servers[url]?.devices ?? []; }
 
-  function boundDevice(url: string, deviceId: string) {
+  function boundDevice(url: string, guid: string) {
     return devices.find(d =>
             d.connectionInfo.url === url
-            && d.deviceId === deviceId
+            && d.guid === guid
             && d.connected,
     );
   }
@@ -25,44 +25,41 @@
   function disconnectServer(url: string) {
     for (const d of devices) {
       if (d.connectionInfo.url === url && d.connected) {
-        deviceManager.disconnect(d.id);   // marks disconnected, does NOT close transport
+        deviceManager.disconnect(d.id);
       }
     }
-    serverManager.disconnect(url);        // owns transport lifetime
+    serverManager.disconnect(url);
   }
 
-  async function connectDevice(url: string, deviceId: string) {
+  async function connectDevice(url: string, guid: string) {
     const s = servers[url];
     if (!s?.connected) return;
-    const info = s.devices.find(d => d.id === deviceId);
+    const info = s.devices.find(d => d.guid === guid);
     if (!info) return;
 
     const t = serverManager.getTransport(url);
     if (!t) { console.error('no transport for', url); return; }
 
-    const store = device;
+    const store = new DeviceSvelte();
 
     await store.bind(t, {
-      deviceId: info.id,
-      publishedId: info.publishedId,
-      deviceGuid: info.deviceGuid,
+      guid: info.guid,
+      serverid: info.serverid,
       productName: info.product,
       kind: info.kind,
     });
 
     deviceManager.bindTransport(t, store, {
       url,
-      deviceId: info.id,
-      publishedId: info.publishedId,
-      deviceGuid: info.deviceGuid,
-      serverGuid: s.serverInfo?.serverId,
+      guid: info.guid,
+      serverid: info.serverid,
       productName: info.product,
       kind: info.kind,
     });
   }
 
-  async function disconnectDevice(url: string, deviceId: string) {
-    const rec = boundDevice(url, deviceId);
+  async function disconnectDevice(url: string, guid: string) {
+    const rec = boundDevice(url, guid);
     if (!rec) return;
     try { await rec.store.unbind(); } catch { /* ignore */ }
     deviceManager.disconnect(rec.id);
@@ -83,12 +80,10 @@
   // URLs we've already auto-restored since this server became connected.
   const restoredThisSession = new Set<string>();
 
-  // Whenever a server becomes connected, restore any persisted device bindings.
   $effect(() => {
     for (const url of urls) {
       const s = servers[url];
       if (!s?.connected) {
-        // Reset the guard when the server drops so a future reconnect retries.
         restoredThisSession.delete(url);
         continue;
       }
@@ -104,21 +99,20 @@
     const persisted = deviceManager.bindingsFor(url);
     if (persisted.length === 0) return;
 
-    // Only try IDs that still exist on the server's current device list.
-    const liveIds = new Set(s.devices.map(d => d.id));
+    // Reject any binding whose stored serverid doesn't match the current
+    // server's serverId — the bridge was replaced and the GUIDs are stale.
+    const liveGuids = new Set(s.devices.map(d => d.guid));
     for (const pb of persisted) {
-      if (!liveIds.has(pb.deviceId)) {
-        // Device no longer exists on this server — drop the stale record.
-        deviceManager.forgetBinding(url, pb.deviceId);
+      if (!liveGuids.has(pb.guid)) {
+        deviceManager.forgetBinding(url, pb.guid);
         continue;
       }
-      // Skip if already bound (e.g. user connected manually before SSE settled).
-      if (boundDevice(url, pb.deviceId)) continue;
+      if (boundDevice(url, pb.guid)) continue;
       try {
-        await connectDevice(url, pb.deviceId);
+        await connectDevice(url, pb.guid);
       } catch (e) {
-        console.warn(`Auto-restore failed for ${url} ${pb.deviceId}:`, e);
-        deviceManager.forgetBinding(url, pb.deviceId);
+        console.warn(`Auto-restore failed for ${url} ${pb.guid}:`, e);
+        deviceManager.forgetBinding(url, pb.guid);
       }
     }
   }
@@ -188,19 +182,19 @@
               <p class="hint">No DSP units on this server.</p>
             {:else}
               <ul class="list">
-                {#each serverDevices(url) as info (info.id)}
-                  {@const bound = boundDevice(url, info.id)}
+                {#each serverDevices(url) as info (info.guid)}
+                  {@const bound = boundDevice(url, info.guid)}
                   <li class="row">
                     <span class="kind pill {info.kind}">{info.kind}</span>
-                    <span class="name" title={info.publishedId}>{info.product}</span>
-                    <span class="badge mono">{info.deviceGuid}</span>
+                    <span class="name" title={info.product}>{info.product}</span>
+                    <span class="badge mono">{info.guid}</span>
 
                     {#if bound}
                       <button class="btn danger"
-                              onclick={() => disconnectDevice(url, info.id)}>Disconnect</button>
+                              onclick={() => disconnectDevice(url, info.guid)}>Disconnect</button>
                     {:else}
                       <button class="btn primary"
-                              onclick={() => connectDevice(url, info.id)}>Connect</button>
+                              onclick={() => connectDevice(url, info.guid)}>Connect</button>
                     {/if}
                   </li>
                 {/each}

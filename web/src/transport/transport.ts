@@ -6,7 +6,7 @@ export interface DspTransport {
   open(): Promise<void>;
   close(): Promise<void>;
   /** Send a request frame; resolve with the raw bytes of the next reply report. */
-  request(frame: Uint8Array, timeoutMs?: number, deviceId?: string): Promise<Uint8Array>;
+  request(frame: Uint8Array, timeoutMs?: number, guid?: string): Promise<Uint8Array>;
   /** Subscribe to every inbound report (incl. unsolicited, e.g. meters). Returns an unsubscribe fn. */
   onReport(cb: (report: Uint8Array) => void): () => void;
 }

@@ -5,10 +5,15 @@
 // exported singleton is reactive; components re-render when `urls` or
 // `servers` change.
 //
-// Persistence: `urls` (the configured URL list) and `wanted` (per-URL desired
-// connection state) are persisted. On refresh, only URLs the user explicitly
-// connected to are auto-restored; a URL the user disconnected from stays
-// disconnected until they click Connect again.
+// Identifier model (matches bridge.js):
+//   SERVER_ID = 5-char alphanumeric server id (e.g. "Q7X2K")
+//   guid      = "DSP" + 5-char alphanumeric (e.g. "DSP7C4H9")
+//   serverid  = SERVER_ID  (server identity, same for every device on a bridge)
+//
+// Every server message carries BOTH `guid` and `serverid`. The pair
+// `(serverid, guid)` is the globally-unique device identity. Within one server
+// `guid` alone is unique, so the pair collapses to `guid` for lookups on a
+// single `ServerConnection`.
 
 import { WebSocketTransport } from "../transport/websocket.ts";
 
@@ -22,16 +27,15 @@ export interface ServerInfo {
   bindHost?: string;
   mockMode: boolean;
   mockDeviceCount: number;
-  deviceGuids: Array<{ key: string; guid: string; publishedId: string }>;
+  guids: Array<{ key: string; guid: string; serverid: string }>;
   timestamp: string;
 }
 
 export interface DeviceInfo {
-  id: string;
+  guid: string;
+  serverid: string;
   kind: "hid" | "mock";
   path: string;
-  deviceGuid: string;
-  publishedId: string;
   product: string;
   connectedAt: string;
   subscriberCount: number;
@@ -234,6 +238,43 @@ class ServerManager {
     }
   }
 
+  /**
+   * Look up one device by (url, guid). Returns undefined if the server isn't
+   * connected or the device isn't in its list.
+   */
+  getDevice(url: string, guid: string): DeviceInfo | undefined {
+    return this.servers[url]?.devices.find((d) => d.guid === guid);
+  }
+
+  /**
+   * Look up a device by the (serverid, guid) pair across all connected servers.
+   * Use this when a message might come from any server and you only have the
+   * `(serverid, guid)` pair to identify the device.
+   */
+  getDeviceByServerAndGuid(serverid: string, guid: string): DeviceInfo | undefined {
+    for (const conn of Object.values(this.servers)) {
+      if (!conn.connected) continue;
+      if (conn.serverInfo?.serverId !== serverid) continue;
+      const dev = conn.devices.find((d) => d.guid === guid);
+      if (dev) return dev;
+    }
+    return undefined;
+  }
+
+  /**
+   * Resolve a `(serverid, guid)` pair to the server URL that owns it.
+   * Returns undefined if no connected server reports that `serverid`.
+   */
+  findServerUrlByServerId(serverid: string): string | undefined {
+    for (const [url, conn] of Object.entries(this.servers)) {
+      if (!conn.connected) continue;
+      if (conn.serverInfo?.serverId === serverid) return url;
+    }
+    return undefined;
+  }
+
+  // --- SSE ----------------------------------------------------------------
+
   #openSse(url: string): void {
     this.#closeSse(url);
     try {
@@ -242,7 +283,20 @@ class ServerManager {
         try {
           const data = JSON.parse(e.data);
           if (data?.type !== "devices_update" || !Array.isArray(data.devices)) return;
-          this.#patch(url, { devices: data.devices as DeviceInfo[] });
+          // Ensure every incoming DeviceInfo carries both identifiers.
+          // The bridge always sends them; this is a safety net so a stale
+          // backend can't poison the map with `undefined` fields.
+          const devices: DeviceInfo[] = data.devices.map((d: any) => ({
+            guid: d.guid,
+            serverid: d.serverid,
+            kind: d.kind,
+            path: d.path,
+            product: d.product,
+            connectedAt: d.connectedAt,
+            subscriberCount: d.subscriberCount ?? 0,
+            attached: d.attached,
+          }));
+          this.#patch(url, { devices });
         } catch { /* ignore */ }
       };
       sse.onerror = () => { /* EventSource auto-reconnects */ };

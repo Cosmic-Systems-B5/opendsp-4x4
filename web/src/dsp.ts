@@ -2,10 +2,10 @@
 // sends them, and parses replies ([01,00,N,code,data]). Encodings still being
 // calibrated (PEQ gain dB, crossover Hz) are exposed in raw form via control.ts.
 //
-// When bound to a bridge transport (WebSocketTransport), `deviceId` selects
-// which DSP unit the request is meant for. The transport uses it to filter
-// replies so multiple units on one socket don't collide. For USB transports
-// (WebHidTransport) `deviceId` is undefined and ignored.
+// When bound to a bridge transport (WebSocketTransport), `guid` selects which
+// DSP unit the request is meant for. The transport uses it to filter replies
+// so multiple units on one socket don't collide. For USB transports
+// (WebHidTransport) `guid` is undefined and ignored.
 import type { DspTransport } from "./transport/transport.ts";
 import { parseReply, type Reply } from "./protocol/frame.ts";
 import {
@@ -22,13 +22,13 @@ import {
 const ascii = (b: Uint8Array) => new TextDecoder().decode(b).replace(/\0+$/, "").trim();
 
 export class Dsp {
-  private readonly deviceId?: string;
+  private readonly guid?: string;
 
   constructor(
       private readonly transport: DspTransport,
-      deviceId?: string,
+      guid?: string,
   ) {
-    this.deviceId = deviceId;
+    this.guid = guid;
   }
 
   /**
@@ -39,14 +39,14 @@ export class Dsp {
 
   /** Read the device version string (e.g. "4x4MINIPRO V010"). */
   async getVersion(): Promise<string> {
-    await this.wake(); // device requires a status query (0x10) immediately before 0x13
+    await this.wake();
     return ascii((await this.send(getVersionFrame())).data);
   }
 
   /** Read a preset's name by slot (0..29). */
   async presetName(slot: number): Promise<string> {
     const r = await this.send(readPresetNameFrame(slot));
-    return ascii(r.data.slice(1)); // data = [slot, ...14-char name]
+    return ascii(r.data.slice(1));
   }
 
   /** Read a channel's raw 50-byte state block (0..8). */
@@ -79,24 +79,10 @@ export class Dsp {
 
   /**
    * Send a pre-built request frame and parse the reply.
-   * `deviceId` (bridge only) selects which unit the request targets, so
-   * replies for other units on the same socket are ignored by the transport.
+   * `guid` (bridge only) selects which unit the request targets, so replies
+   * for other units on the same socket are ignored by the transport.
    */
   async send(frame: Uint8Array): Promise<Reply> {
-    if ((globalThis as any).__dspDebug) {
-      console.log('%c[dsp]', 'color:#a0c4a8', 'send',
-          'deviceId=' + (this.deviceId ?? '-'),
-          'frameLen=' + frame.length,
-          'head=' + Array.from(frame.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' '));
-    }
-    const report = await this.transport.request(frame, undefined, this.deviceId);
-    const reply = parseReply(report);
-    if ((globalThis as any).__dspDebug) {
-      console.log('%c[dsp]', 'color:#a0c4a8', 'reply',
-          'code=0x' + reply.code.toString(16),
-          'dataLen=' + reply.data.length,
-          'checksumOk=' + reply.checksumOk);
-    }
-    return reply;
+    return parseReply(await this.transport.request(frame, undefined, this.guid));
   }
 }
