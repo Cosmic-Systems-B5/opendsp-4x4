@@ -17,13 +17,3 @@ Claude Ignore This File
 [ ] Web UI: Routing Output panel Always show the compressor settings, remove the foldout UI but leave the panel.
 
 [ ] Web UI: Routing Output panel remove the fold out delay, it's already present in the main EQ panel now
-
-[ ] Server UI: make the routing table much smaller, each square only 5px and no axis labels. I only need to see if it's changing
-
-[ ] Server UI: add small eq data representations of the four outputs.
-
-[ ] Server UI: make the IO gain levels more compact as well.
-
-[ ] Server UI: Add the delay time to each output channel display
-
-[ ] Server UI: Add the polarity to each output channel display

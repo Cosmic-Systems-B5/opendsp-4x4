@@ -1,16 +1,24 @@
-// Preset manager for JSON save/load system
+// Preset manager for JSON save/load system.
+//
+// Presets are device-agnostic by default: they contain channels, routing,
+// eqLink, and a preset name. Two optional fields, `serverid` and `guid`,
+// record which DSP the preset was saved from. They're never used for lookup
+// (the preset id is the key) but they let a caller decide "load into the
+// device it came from" vs "load into any connected device".
 
-import type {Channel} from "./device-model.ts";
+import type { Channel } from "./device-model.ts";
 
 const PRESET_VERSION = "1.0";
 const DEFAULT_PRESET_NAME = "Untitled preset";
 
-// Full DSP preset data structure - device settings in nested object, metadata at root
 interface DspPreset {
-  id: string;       // Unique GUID for the preset
+  id: string;                // Unique GUID for the preset (per-preset identity)
   version: string;
   name: string;
   timestamp: string;
+  /** Optional: which device this preset was saved from. */
+  serverid?: string;
+  guid?: string;
   device: {
     channels: Channel[];
     routing: number[];
@@ -20,12 +28,10 @@ interface DspPreset {
   };
 }
 
-// Generate a simple unique ID
 function generateId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).substr(2);
+  return Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
 }
 
-// Export download functionality as a utility function
 function downloadJsonFile(data: object, filename: string): void {
   try {
     const json = JSON.stringify(data, null, 2);
@@ -44,26 +50,41 @@ function downloadJsonFile(data: object, filename: string): void {
   }
 }
 
+/** Deep-clone one Channel. Aliased eq/comp/gate would otherwise leak across
+ *  a saved preset and a live edit. */
+function cloneChannel(ch: Channel): Channel {
+  return {
+    index: ch.index,
+    name: ch.name,
+    isOutput: ch.isOutput,
+    gainDb: ch.gainDb,
+    mute: ch.mute,
+    polarity: ch.polarity,
+    meter: ch.meter,
+    eq: ch.eq ? {
+      bands: ch.eq.bands.map(b => ({ ...b })),
+      hpf: { freqHz: ch.eq.hpf.freqHz, slope: ch.eq.hpf.slope },
+      lpf: { freqHz: ch.eq.lpf.freqHz, slope: ch.eq.lpf.slope },
+    } : undefined,
+    delayMs: ch.delayMs,
+    comp: ch.comp ? { ...ch.comp } : undefined,
+    gate: ch.gate ? { ...ch.gate } : undefined,
+    eqMode: ch.eqMode,
+  };
+}
+
 class PresetManager {
-  // Use regular arrays with manual reactivity tracking
   private presets: DspPreset[] = [];
   private listeners: (() => void)[] = [];
 
   constructor() {
-    // Load presets from localStorage on init
     this.loadPresets();
   }
 
-  /** Get/set preset name for current session */
-  get presetName(): string {
-    return this._presetName;
-  }
-  set presetName(name: string) {
-    this._presetName = name;
-  }
+  get presetName(): string { return this._presetName; }
+  set presetName(name: string) { this._presetName = name; }
   private _presetName = "";
 
-  /** Subscribe to preset changes */
   subscribe(callback: () => void): () => void {
     this.listeners.push(callback);
     return () => {
@@ -72,50 +93,37 @@ class PresetManager {
     };
   }
 
-  /** Notify listeners of a change */
   private notify(): void {
     for (const listener of this.listeners) {
-      listener();
+      try { listener(); } catch (e) { console.warn('preset subscriber failed:', e); }
     }
   }
 
-  /** Save the current device state to a new preset */
-  saveCurrentPreset(name?: string, channels?: Channel[], routing?: number[]): DspPreset {
+  // --- save ------------------------------------------------------------
+
+  /** Save the current device state to a new preset. */
+  saveDeviceStateToPreset(
+      name: string,
+      channels: Channel[],
+      routing: number[],
+      eqLink: Record<number, number>,
+      activePreset = -1,
+      identity?: { serverid?: string; guid?: string },
+  ): DspPreset {
     const newPreset: DspPreset = {
       id: generateId(),
       version: PRESET_VERSION,
       name: name || DEFAULT_PRESET_NAME,
       timestamp: new Date().toISOString(),
+      serverid: identity?.serverid,
+      guid: identity?.guid,
       device: {
-        channels: channels || [],
-        routing: routing || [0x01, 0x02, 0x04, 0x08],
-        activePreset: -1,
-        eqLink: {},
-        presetName: ""
-      }
-    };
-
-    this.presets = [newPreset, ...this.presets];
-    this.savePresets();
-    this.notify();
-    return newPreset;
-  }
-
-  /** Save current device state with all data to a preset */
-  saveDeviceStateToPreset(name: string, channels: Channel[], routing: number[], eqLink: Record<number, number>, activePreset: number = -1): DspPreset {
-    const newPreset: DspPreset = {
-      id: generateId(),
-      version: PRESET_VERSION,
-      name,
-      timestamp: new Date().toISOString(),
-      device: {
-        // Clone channels to prevent external modifications
-        channels: channels.map(ch => ({ ...ch })),
+        channels: channels.map(cloneChannel),
         routing: [...routing],
         activePreset,
         eqLink: { ...eqLink },
-        presetName: this.presetName || ""
-      }
+        presetName: this.presetName || "",
+      },
     };
 
     this.presets = [newPreset, ...this.presets];
@@ -124,140 +132,172 @@ class PresetManager {
     return newPreset;
   }
 
-  /** Export current preset as JSON string */
-  exportCurrentPreset(): string {
-    // Return empty until a preset is actually saved with real data
-    const preset = this.presets.length > 0 ? this.presets[0] : this.saveCurrentPreset();
-    return JSON.stringify(preset, null, 2);
-  }
+  // --- load / read -----------------------------------------------------
 
-  /** Import a preset from JSON */
-  importPreset(presetData: DspPreset | string): void {
-    let preset: DspPreset;
-
-    if (typeof presetData === 'string') {
-      try {
-        preset = JSON.parse(presetData);
-      } catch (e) {
-        throw new Error("Invalid JSON format");
-      }
-    } else {
-      preset = presetData;
-    }
-
-    // Validate preset - check for device object structure
-    const device = preset.device || {};
-    if (!device.channels || !Array.isArray(device.routing)) {
-      throw new Error("Invalid preset structure");
-    }
-
-    // Update or add preset by ID (more reliable than timestamp)
-    const existingIndex = this.presets.findIndex(p => p.id === preset.id);
-    if (existingIndex >= 0) {
-      this.presets[existingIndex] = preset;
-    } else {
-      this.presets = [preset, ...this.presets];
-    }
-
-    this.savePresets();
-    this.notify();
-  }
-
-  /** Load a preset by index */
   loadPreset(index: number): DspPreset | undefined {
     if (index < 0 || index >= this.presets.length) return undefined;
     return this.presets[index];
   }
 
-  /** Delete a preset by index */
-  deletePreset(index: number): void {
-    if (index < 0 || index >= this.presets.length) return;
-
-    this.presets = this.presets.filter((_, i) => i !== index);
-    this.savePresets();
-    this.notify();
+  getPresets(): DspPreset[] {
+    return [...this.presets];
   }
 
-  /** Update an existing preset by ID */
+  findPresetIndexById(id: string): number {
+    if (!id) return -1;
+    return this.presets.findIndex(p => p.id === id);
+  }
+
+  /** Export a preset by id as JSON. Does NOT create one if missing. */
+  exportPreset(id: string): string | null {
+    const idx = this.findPresetIndexById(id);
+    if (idx < 0) return null;
+    return JSON.stringify(this.presets[idx], null, 2);
+  }
+
+  /** Export the most recently-saved preset as JSON. */
+  exportCurrentPreset(): string | null {
+    return this.presets[0] ? JSON.stringify(this.presets[0], null, 2) : null;
+  }
+
+  exportAllPresets(): string {
+    return JSON.stringify(this.presets, null, 2);
+  }
+
+  // --- update ----------------------------------------------------------
+
+  /** Replace an existing preset by id. Returns false if not found. */
   updatePresetById(id: string, updates: Partial<DspPreset>): boolean {
-    const idx = this.presets.findIndex(p => p.id === id);
+    const idx = this.findPresetIndexById(id);
     if (idx < 0) return false;
+    const current = this.presets[idx]!;
 
-    // Get the current preset data to merge with
-    const currentPreset = this.presets[idx];
-    if (!currentPreset) return false;
-
-    // Merge updates - handle device settings separately
-    const updatedDevice = {
-      ...currentPreset.device,
-      channels: updates.device?.channels ?? currentPreset.device.channels.map(ch => ({
-        ...ch,
-        eq: ch.eq || undefined,  // Preserve existing EQ or leave undefined
-        delayMs: ch.delayMs,
-        comp: ch.comp || (this.isOutput(ch.index) ? { thresholdDb: 20, ratioIndex: 0, kneeDb: 0, attackMs: 50, releaseMs: 500 } : undefined),
-        gate: ch.gate || (!this.isOutput(ch.index) ? { thresholdDb: -90, attackMs: 50, holdMs: 100, releaseMs: 500 } : undefined)
-      })),
-      routing: updates.device?.routing ?? currentPreset.device.routing,
-      activePreset: updates.device?.activePreset ?? currentPreset.device.activePreset,
-      eqLink: updates.device?.eqLink ?? currentPreset.device.eqLink,
-      presetName: updates.device?.presetName ?? currentPreset.device.presetName
+    const nextDevice = {
+      channels: updates.device?.channels
+          ? updates.device.channels.map(cloneChannel)
+          : current.device.channels.map(cloneChannel),
+      routing: updates.device?.routing
+          ? [...updates.device.routing]
+          : [...current.device.routing],
+      activePreset: updates.device?.activePreset ?? current.device.activePreset,
+      eqLink: updates.device?.eqLink
+          ? { ...updates.device.eqLink }
+          : { ...current.device.eqLink },
+      presetName: updates.device?.presetName ?? current.device.presetName,
     };
 
     this.presets[idx] = {
-      id: currentPreset.id,
-      version: currentPreset.version,
-      name: updates.name ?? currentPreset.name,
-      timestamp: updates.timestamp ?? currentPreset.timestamp,
-      device: updatedDevice
+      id: current.id,
+      version: current.version,
+      name: updates.name ?? current.name,
+      timestamp: updates.timestamp ?? current.timestamp,
+      serverid: updates.serverid ?? current.serverid,
+      guid: updates.guid ?? current.guid,
+      device: nextDevice,
     };
     this.savePresets();
     this.notify();
     return true;
   }
 
-  // Helper to determine if channel is output (index >= 4 means it's an output)
-  private isOutput(index: number): boolean {
-    return index >= 4; // OUT_BASE = 0x04 = 4
+  // --- delete ----------------------------------------------------------
+
+  deletePreset(index: number): void {
+    if (index < 0 || index >= this.presets.length) return;
+    this.presets = this.presets.filter((_, i) => i !== index);
+    this.savePresets();
+    this.notify();
   }
 
-  /** Find the index of a preset by ID */
-  findPresetIndexById(id: string): number {
-    if (!id) return -1;
-    return this.presets.findIndex(p => p.id === id);
+  clearAllPresets(): void {
+    this.presets = [];
+    this.savePresets();
+    this.notify();
   }
 
-  /** Get all saved presets */
-  getPresets(): DspPreset[] {
-    return [...this.presets];
+  // --- import / export -------------------------------------------------
+
+  /** Import a single preset. Accepts a JSON string or an already-parsed object. */
+  importPreset(presetData: DspPreset | string): void {
+    let preset: DspPreset;
+    if (typeof presetData === 'string') {
+      try { preset = JSON.parse(presetData); }
+      catch { throw new Error("Invalid JSON format"); }
+    } else {
+      preset = presetData;
+    }
+
+    // Accept both the current shape (device.channels / device.routing) and
+    // the legacy shape (top-level channels / routing).
+    const p = preset as any;
+    const device = p.device ?? { channels: p.channels, routing: p.routing };
+    if (!Array.isArray(device?.channels) || !Array.isArray(device?.routing)) {
+      throw new Error("Invalid preset structure");
+    }
+
+    // Normalise into the current shape.
+    const normalised: DspPreset = {
+      id: preset.id || generateId(),
+      version: preset.version || PRESET_VERSION,
+      name: preset.name || DEFAULT_PRESET_NAME,
+      timestamp: preset.timestamp || new Date().toISOString(),
+      serverid: preset.serverid,
+      guid: preset.guid,
+      device: {
+        channels: device.channels.map(cloneChannel),
+        routing: [...device.routing],
+        activePreset: device.activePreset ?? -1,
+        eqLink: device.eqLink ?? {},
+        presetName: device.presetName ?? "",
+      },
+    };
+
+    const existingIndex = this.findPresetIndexById(normalised.id);
+    if (existingIndex >= 0) this.presets[existingIndex] = normalised;
+    else this.presets = [normalised, ...this.presets];
+
+    this.savePresets();
+    this.notify();
   }
 
-  /** Export presets to a JSON string (all presets) */
-  exportAllPresets(): string {
-    return JSON.stringify(this.presets, null, 2);
-  }
-
-  /** Import multiple presets from a JSON string */
+  /** Import many presets. Accepts either shape (current or legacy). */
   importMultiplePresets(jsonString: string): void {
     try {
       const imported = JSON.parse(jsonString);
-
       if (!Array.isArray(imported)) {
         throw new Error("Invalid preset format - expected array");
       }
 
-      // Validate and filter valid presets
-      const validPresets = imported.filter(p => {
+      const valid = imported.filter((p: any) => {
+        const device = p?.device ?? p;
         return p &&
-          typeof p.name === 'string' &&
-          Array.isArray(p.channels) &&
-          Array.isArray(p.routing);
+            typeof p.name === 'string' &&
+            Array.isArray(device?.channels) &&
+            Array.isArray(device?.routing);
       });
 
-      if (validPresets.length === 0) {
-        throw new Error("No valid presets found in file");
-      }
+      if (valid.length === 0) throw new Error("No valid presets found in file");
 
-      this.presets = [...validPresets, ...this.presets];
+      const normalised: DspPreset[] = valid.map((p: any) => {
+        const device = p.device ?? p;
+        return {
+          id: p.id || generateId(),
+          version: p.version || PRESET_VERSION,
+          name: p.name || DEFAULT_PRESET_NAME,
+          timestamp: p.timestamp || new Date().toISOString(),
+          serverid: p.serverid,
+          guid: p.guid,
+          device: {
+            channels: device.channels.map(cloneChannel),
+            routing: [...device.routing],
+            activePreset: device.activePreset ?? -1,
+            eqLink: device.eqLink ?? {},
+            presetName: device.presetName ?? "",
+          },
+        };
+      });
+
+      this.presets = [...normalised, ...this.presets];
       this.savePresets();
       this.notify();
     } catch (e) {
@@ -266,10 +306,27 @@ class PresetManager {
     }
   }
 
-  /** Save presets to localStorage */
+  // --- download --------------------------------------------------------
+
+  downloadPreset(index: number): DspPreset | undefined {
+    const preset = this.loadPreset(index);
+    if (!preset) return undefined;
+    const { timestamp, ...exportable } = preset;
+    const filename = `${preset.name.replace(/[^a-z0-9]/gi, '_')}-${new Date().toISOString().slice(0, 10)}.json`;
+    downloadJsonFile(exportable, filename);
+    return preset;
+  }
+
+  downloadAllPresets(): void {
+    const cleaned = this.getPresets().map(({ timestamp, ...preset }) => preset);
+    downloadJsonFile(cleaned, `dsp-presets-${new Date().toISOString().slice(0, 10)}.json`);
+  }
+
+  // --- persistence -----------------------------------------------------
+
   private savePresets(): void {
     try {
-      // Only save the last 50 presets to avoid localStorage quota issues
+      // Cap at 50 presets to keep the localStorage write bounded.
       const toSave = this.presets.slice(0, 50);
       localStorage.setItem("opendsp-presets", JSON.stringify(toSave));
     } catch (e) {
@@ -277,134 +334,86 @@ class PresetManager {
     }
   }
 
-  /** Load presets from localStorage */
   private loadPresets(): void {
     try {
       const data = localStorage.getItem("opendsp-presets");
-      if (data) {
-        this.presets = JSON.parse(data);
-        // Ensure all presets have the correct structure with all fields
-        this.presets.forEach(preset => {
-          // Generate ID for presets that don't have one (backward compatibility)
-          if (!preset.id) {
-            preset.id = generateId();
-          }
-
-          // Handle both new and old preset structures
-          const device = preset.device || {};
-
-          if (!device.channels || device.channels.length === 0) {
-            device.channels = [];
-          }
-          if (!device.routing || device.routing.length === 0) {
-            device.routing = [0x01, 0x02, 0x04, 0x08];
-          }
-          // Initialize missing fields with defaults
-          if (device.eqLink === undefined) device.eqLink = {};
-          if (device.presetName === undefined) device.presetName = "";
-        });
-      }
+      if (!data) return;
+      const parsed = JSON.parse(data);
+      if (!Array.isArray(parsed)) return;
+      this.presets = parsed.map((p: any) => {
+        // Backward-compat: pre-device presets had top-level channels/routing.
+        const device = p.device ?? { channels: p.channels, routing: p.routing };
+        return {
+          id: p.id || generateId(),
+          version: p.version || PRESET_VERSION,
+          name: p.name || DEFAULT_PRESET_NAME,
+          timestamp: p.timestamp || new Date().toISOString(),
+          serverid: p.serverid,
+          guid: p.guid,
+          device: {
+            channels: Array.isArray(device?.channels) ? device.channels.map(cloneChannel) : [],
+            routing: Array.isArray(device?.routing) ? [...device.routing] : [0x01, 0x02, 0x04, 0x08],
+            activePreset: device?.activePreset ?? -1,
+            eqLink: device?.eqLink ?? {},
+            presetName: device?.presetName ?? "",
+          },
+        };
+      });
     } catch (e) {
       console.error("Error loading presets:", e);
     }
   }
 
-  /** Clear all saved presets */
-  clearAllPresets(): void {
-    this.presets = [];
-    localStorage.removeItem("opendsp-presets");
-    this.notify();
-  }
-
-  /**
-   * Download a specific preset by index as JSON file
-   * @param index - Index of the preset to download
-   * @returns The downloaded preset data
-   */
-  downloadPreset(index: number): DspPreset | undefined {
-    const preset = this.loadPreset(index);
-    if (!preset) return undefined;
-
-    // Create a copy without timestamp for cleaner export (user can add their own)
-    const { timestamp, ...exportable } = preset;
-    const filename = `${preset.name.replace(/[^a-z0-9]/gi, '_')}-${new Date().toISOString().slice(0, 10)}.json`;
-    downloadJsonFile(exportable, filename);
-
-    return preset;
-  }
-
-  /**
-   * Download all presets as a single JSON file
-   */
-  downloadAllPresets(): void {
-    // Create clean export without internal timestamps
-    const cleanedPresets = this.getPresets().map(({ timestamp, ...preset }) => preset);
-    downloadJsonFile(cleanedPresets, `dsp-presets-${new Date().toISOString().slice(0, 10)}.json`);
-  }
+  // --- name generator --------------------------------------------------
 
   advancedNameGenerator(): string {
-    let adjectives = [
-      // Colors (Expanded)
+    const adjectives = [
       'Red', 'Blue', 'Green', 'Golden', 'Silver', 'Purple', 'Crimson', 'Azure',
       'Emerald', 'Amber', 'Violet', 'Indigo', 'Ebony', 'Ivory', 'Scarlet',
       'Magenta', 'Turquoise', 'Cerulean', 'Vermilion', 'Saffron', 'Cobalt',
       'Lavender', 'Mauve', 'Teal', 'Maroon', 'Charcoal', 'Pearl', 'Bronze',
       'Platinum', 'Ruby', 'Sapphire', 'Topaz', 'Jade', 'Onyx', 'Coral',
-      // Moods/Emotions (Expanded)
       'Happy', 'Sad', 'Angry', 'Calm', 'Wild', 'Gentle', 'Fierce', 'Serene',
       'Mystic', 'Lonely', 'Brave', 'Silent', 'Proud', 'Joyful', 'Peaceful',
       'Eager', 'Weary', 'Furious', 'Anxious', 'Hopeful', 'Desolate', 'Ecstatic',
       'Melancholy', 'Vibrant', 'Tranquil', 'Wrathful', 'Blissful', 'Somber',
       'Jubilant', 'Pensive', 'Ferocious', 'Timid', 'Confident', 'Desperate',
-      // Nature Elements
       'Flowing', 'Raging', 'Still', 'Ancient', 'Eternal', 'Verdant', 'Barren',
       'Frozen', 'Blazing', 'Thundering', 'Whispering', 'Howling', 'Rushing',
       'Crumbling', 'Blooming', 'Withering', 'Shimmering', 'Glistening', 'Radiant',
       'Shadowy', 'Luminous', 'Twilight', 'Dawn', 'Dusk', 'Solar', 'Lunar',
-      // Textures & Materials
       'Smooth', 'Rough', 'Polished', 'Weathered', 'Crystalline', 'Metallic',
       'Earthen', 'Mossy', 'Sandy', 'Stony', 'Wooden', 'Icy', 'Fiery', 'Fuzzy',
       'Prickly', 'Sleek', 'Glossy', 'Matte', 'Velvet', 'Silken', 'Leathery',
-      // Silly & Whimsical
       'Bouncy', 'Wobbly', 'Giggling', 'Sleepy', 'Dizzy', 'Silly', 'Goofy',
       'Clumsy', 'Bumbling', 'Wiggly', 'Squishy', 'Fluffy', 'Fuzzy', 'Sparkly',
-      'Twirly', 'Whirly', 'Dancing', 'Singing', 'Chuckling', 'Giddy'
-    ]
+      'Twirly', 'Whirly', 'Dancing', 'Singing', 'Chuckling', 'Giddy',
+    ];
 
-    let nouns = [
-      // Animals (Expanded with silly/non-fierce)
+    const nouns = [
       'Dragon', 'Wolf', 'Eagle', 'Lion', 'Tiger', 'Fox', 'Bear', 'Hawk',
       'Falcon', 'Raven', 'Panther', 'Leopard', 'Owl', 'Shark', 'Rhino',
       'Buffalo', 'Cobra', 'Phoenix', 'Griffin', 'Unicorn', 'Basilisk',
-
-      // Silly & Gentle Animals
       'Platypus', 'Capybara', 'Sloth', 'Quokka', 'Axolotl', 'Fennec', 'Pangolin',
       'Manatee', 'Narwhal', 'Blobfish', 'Tarsier', 'Aye-Aye', 'Sugar Glider',
       'Hedgehog', 'Puffin', 'Penguin', 'Otter', 'Ferret', 'Meerkat', 'Lemur',
       'Koala', 'Wombat', 'Tamarin', 'Marmoset', 'Chinchilla', 'Guinea Pig',
       'Hamster', 'Gerbil', 'Bunny', 'Puppy', 'Kitten', 'Piglet', 'Calf',
       'Fawn', 'Duckling', 'Gosling', 'Tadpole', 'Caterpillar', 'Ladybug',
-
-      // Mythical & Whimsical Creatures
       'Mermaid', 'Faerie', 'Sprite', 'Pixie', 'Gnome', 'Brownie', 'Leprechaun',
       'Will-o-Wisp', 'Jackalope', 'Wolpertinger', 'Cheshire', 'Snorkack',
       'Niffler', 'Porg', 'Ewok', 'Wookie', 'Gremlin', 'Mogwai', 'Fraggle',
-
-      // Everyday Silly Things
       'Meatball', 'Noodle', 'Pancake', 'Waffle', 'Cupcake', 'Muffin', 'Donut',
       'Pickle', 'Potato', 'Bean', 'Sprout', 'Peapod', 'Marshmallow', 'Jellybean',
-      'Gummy Bear', 'Lollipop', 'Cupcake', 'Brownie', 'Cookie', 'Pudding'
-    ]
+      'Gummy Bear', 'Lollipop', 'Brownie', 'Cookie', 'Pudding',
+    ];
 
-    const adjective = adjectives[Math.floor(Math.random() * adjectives.length)];
+    const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
     const noun = nouns[Math.floor(Math.random() * nouns.length)];
-    return `${adjective} ${noun}`;
-
+    return `${adj} ${noun}`;
   }
-
 }
 
-// Export the singleton instance
 const presetManager = new PresetManager();
-
 export default presetManager;
+export type { DspPreset };

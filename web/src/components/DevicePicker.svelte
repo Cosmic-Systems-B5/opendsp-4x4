@@ -1,8 +1,11 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import { serverManager } from "../state/server-manager.svelte.ts";
   import { deviceManager } from "../state/device-manager.svelte.ts";
-  import { DeviceSvelte } from "../state/device.svelte.ts";
+  import {
+    connectDevice as bootstrapConnectDevice,
+    disconnectDevice as bootstrapDisconnectDevice,
+    disconnectServer as bootstrapDisconnectServer,
+  } from "../state/bridge-bootstrap.svelte.ts";
 
   let urls = $derived(serverManager.urls);
   let servers = $derived(serverManager.servers);
@@ -15,54 +18,18 @@
 
   function boundDevice(url: string, guid: string) {
     return devices.find(d =>
-            d.connectionInfo.url === url
-            && d.guid === guid
-            && d.connected,
+            d.connectionInfo.url === url && d.guid === guid && d.connected
     );
   }
 
   async function connectServer(url: string) { await serverManager.connect(url); }
-  function disconnectServer(url: string) {
-    for (const d of devices) {
-      if (d.connectionInfo.url === url && d.connected) {
-        deviceManager.disconnect(d.id);
-      }
-    }
-    serverManager.disconnect(url);
-  }
+  function disconnectServer(url: string)    { bootstrapDisconnectServer(url); }
 
   async function connectDevice(url: string, guid: string) {
-    const s = servers[url];
-    if (!s?.connected) return;
-    const info = s.devices.find(d => d.guid === guid);
-    if (!info) return;
-
-    const t = serverManager.getTransport(url);
-    if (!t) { console.error('no transport for', url); return; }
-
-    const store = new DeviceSvelte();
-
-    await store.bind(t, {
-      guid: info.guid,
-      serverid: info.serverid,
-      productName: info.product,
-      kind: info.kind,
-    });
-
-    deviceManager.bindTransport(t, store, {
-      url,
-      guid: info.guid,
-      serverid: info.serverid,
-      productName: info.product,
-      kind: info.kind,
-    });
+    await bootstrapConnectDevice(url, guid);
   }
-
   async function disconnectDevice(url: string, guid: string) {
-    const rec = boundDevice(url, guid);
-    if (!rec) return;
-    try { await rec.store.unbind(); } catch { /* ignore */ }
-    deviceManager.disconnect(rec.id);
+    await bootstrapDisconnectDevice(url, guid);
   }
 
   let newServerUrl = $state("");
@@ -76,48 +43,6 @@
     newServerUrl = "";
     showUrlInput = false;
   }
-
-  // URLs we've already auto-restored since this server became connected.
-  const restoredThisSession = new Set<string>();
-
-  $effect(() => {
-    for (const url of urls) {
-      const s = servers[url];
-      if (!s?.connected) {
-        restoredThisSession.delete(url);
-        continue;
-      }
-      if (restoredThisSession.has(url)) continue;
-      restoredThisSession.add(url);
-      void restoreBindingsFor(url);
-    }
-  });
-
-  async function restoreBindingsFor(url: string) {
-    const s = servers[url];
-    if (!s) return;
-    const persisted = deviceManager.bindingsFor(url);
-    if (persisted.length === 0) return;
-
-    // Reject any binding whose stored serverid doesn't match the current
-    // server's serverId — the bridge was replaced and the GUIDs are stale.
-    const liveGuids = new Set(s.devices.map(d => d.guid));
-    for (const pb of persisted) {
-      if (!liveGuids.has(pb.guid)) {
-        deviceManager.forgetBinding(url, pb.guid);
-        continue;
-      }
-      if (boundDevice(url, pb.guid)) continue;
-      try {
-        await connectDevice(url, pb.guid);
-      } catch (e) {
-        console.warn(`Auto-restore failed for ${url} ${pb.guid}:`, e);
-        deviceManager.forgetBinding(url, pb.guid);
-      }
-    }
-  }
-
-  onMount(() => { void serverManager.restoreConnections(); });
 </script>
 
 <div class="picker">

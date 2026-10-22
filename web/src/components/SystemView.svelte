@@ -5,7 +5,7 @@
 
 <div class="system-view">
   <DevicePicker />
-<!--  <PresetPanel />-->
+  <PresetPanel />
 </div>
 
 <style>

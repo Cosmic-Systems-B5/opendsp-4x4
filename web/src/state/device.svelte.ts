@@ -573,49 +573,68 @@ export class DeviceSvelte {
   }
 
   async applyLoadedPreset(preset: any): Promise<void> {
-    // 1) Write into this store (the UI model).
-    if (Array.isArray(preset.device.routing)) {
-      this.routing = [...preset.device.routing];
-    }
-    if (preset.device.eqLink && typeof preset.device.eqLink === 'object') {
-      this.eqLink = { ...preset.device.eqLink };
-    }
+    if (!preset?.device) return;
+
+    // --- Phase 1: MODEL ---------------------------------------------------
+    // Build the new channels array from the preset. Do not mutate in place —
+    // replace the array so Svelte reactivity sees it as new, and so a failure
+    // in phase 3 leaves the model in a clean, fully-loaded state.
+    const nextChannels = this.channels.slice();
     if (Array.isArray(preset.device.channels)) {
-      const next = this.channels.slice();
       for (let i = 0; i < preset.device.channels.length; i++) {
         const savedCh = preset.device.channels[i];
         if (!savedCh) continue;
-        while (next.length <= i) next.push(defaultChannel(next.length));
-        next[i] = {
-          ...next[i]!,
-          gainDb: savedCh.gainDb ?? next[i]!.gainDb,
-          mute: savedCh.mute ?? next[i]!.mute,
-          polarity: savedCh.polarity ?? next[i]!.polarity,
-          delayMs: savedCh.delayMs ?? next[i]!.delayMs,
-          comp: savedCh.comp ? { ...savedCh.comp } : next[i]!.comp,
-          gate: savedCh.gate ? { ...savedCh.gate } : next[i]!.gate,
+        while (nextChannels.length <= i) nextChannels.push(defaultChannel(nextChannels.length));
+        const base = nextChannels[i]!;
+        nextChannels[i] = {
+          index: base.index,
+          name: savedCh.name ?? base.name,
+          isOutput: base.isOutput,
+          gainDb: typeof savedCh.gainDb === 'number' ? savedCh.gainDb : base.gainDb,
+          mute: typeof savedCh.mute === 'boolean' ? savedCh.mute : base.mute,
+          polarity: typeof savedCh.polarity === 'boolean' ? savedCh.polarity : base.polarity,
+          meter: base.meter,
           eq: savedCh.eq ? {
-            bands: savedCh.eq.bands.map((b: any) => ({ ...b })),
+            bands: savedCh.eq.bands.map((b: any) => ({
+              freqHz: b.freqHz, gainDb: b.gainDb, bwOct: b.bwOct, type: b.type, bypass: b.bypass,
+            })),
             hpf: { freqHz: savedCh.eq.hpf.freqHz, slope: savedCh.eq.hpf.slope },
             lpf: { freqHz: savedCh.eq.lpf.freqHz, slope: savedCh.eq.lpf.slope },
-          } : next[i]!.eq,
+          } : base.eq,
+          delayMs: savedCh.delayMs ?? base.delayMs,
+          comp: savedCh.comp ? { ...savedCh.comp } : base.comp,
+          gate: savedCh.gate ? { ...savedCh.gate } : base.gate,
+          eqMode: savedCh.eqMode ?? base.eqMode,
         };
       }
-      this.channels = next;
     }
-    if (typeof preset.device.activePreset === 'number') {
-      this.activePreset = preset.device.activePreset;
-    }
-    this.saveDeviceState();
+    while (nextChannels.length < 8) nextChannels.push(defaultChannel(nextChannels.length));
 
-    // 2) Push the new UI model to every bound shadow's hardware.
+    this.channels = nextChannels;
+    if (Array.isArray(preset.device.routing)) this.routing = [...preset.device.routing];
+    if (preset.device.eqLink && typeof preset.device.eqLink === 'object') {
+      this.eqLink = { ...preset.device.eqLink };
+    }
+    if (typeof preset.device.presetName === 'string') this.presetName = preset.device.presetName;
+    if (typeof preset.device.activePreset === 'number') this.activePreset = preset.device.activePreset;
+    if (typeof preset.id === 'string') this.currentPresetId = preset.id;
+
+    // --- Phase 2: PERSISTENCE --------------------------------------------
+    // Write the model we just built. If phase 3 fails, the persisted state is
+    // still correct.
+    this.saveDeviceState();
+    this.syncCurrentPreset();
+
+    // --- Phase 3: HARDWARE -----------------------------------------------
+    // Push the loaded model to every bound shadow. Errors are per-device and
+    // do not roll back the model or the persisted state.
     await deviceManager.pushFullConfigToAllFrom(this);
   }
 
   async loadSavedPresetFromStorage(index: number): Promise<void> {
     const preset = presetManager.loadPreset(index);
     if (!preset) return;
-    this.currentPresetId = preset.id;
+    // applyLoadedPreset writes model → persistence → hardware in that order.
     await this.applyLoadedPreset(preset);
   }
 

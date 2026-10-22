@@ -24,6 +24,10 @@
             --err:       #9c5f5f;
             --err-fg:    #d6a8a8;
             --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+            --eq-c0: #6f8fac;
+            --eq-c1: #8fac6f;
+            --eq-c2: #c49a6f;
+            --eq-c3: #a06fbc;
         }
         * { box-sizing: border-box; }
         html, body { margin: 0; }
@@ -207,44 +211,110 @@
             border-top: 1px solid var(--line-soft);
         }
 
+        /* Compact routing matrix: 5px cells, no axis labels */
         .matrix {
             display: grid;
-            grid-template-columns: 24px repeat(4, 1fr);
-            gap: 2px;
-            font-family: var(--mono);
-            font-size: .62rem;
+            grid-template-columns: repeat(4, 5px);
+            grid-auto-rows: 5px;
+            gap: 1px;
+            margin: 0 0 .35rem 0;
+            width: max-content;
         }
         .matrix .cell {
+            width: 5px;
+            height: 5px;
             background: var(--bg-alt);
-            padding: 2px 0;
-            text-align: center;
-            border-radius: 2px;
-            min-height: 16px;
-            color: var(--text-dim);
+            border-radius: 1px;
         }
-        .matrix .hdr { color: var(--text-dim); font-weight: 600; letter-spacing: .04em; }
-        .matrix .lbl { color: var(--text-faint); text-align: right; padding-right: 4px; }
-        .matrix .on  { background: rgba(107,143,122,.22); color: var(--good-fg); font-weight: 700; }
+        .matrix .on { background: var(--good); }
 
+        /* Compact 4-column channel strip, with a state-toggle row below */
         .chans {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
             gap: 2px;
             font-family: var(--mono);
-            font-size: .62rem;
-            margin-top: .4rem;
+            font-size: .6rem;
+            margin-bottom: .35rem;
         }
         .chans .ch {
             background: var(--bg-alt);
             border-radius: 2px;
-            padding: 1px 3px;
-            display: flex;
-            justify-content: space-between;
+            padding: 2px 3px;
+            display: grid;
+            grid-template-rows: auto auto auto auto;
+            gap: 1px;
             color: var(--text-dim);
+            line-height: 1.2;
         }
+        .chans .ch .row1 { display: flex; justify-content: space-between; gap: 4px; }
         .chans .ch .v { color: var(--text); }
-        .chans .ch.mute { color: var(--err-fg); }
-        .chans .ch.mute .v { color: var(--err-fg); }
+        .chans .ch.mute-on .v { color: var(--err-fg); }
+        .chans .ch .delay { color: var(--text-dim); }
+        .chans .ch .state-row {
+            display: flex;
+            gap: 2px;
+            margin-top: 1px;
+        }
+        .chans .ch .state-btn {
+            flex: 1;
+            text-align: center;
+            border-radius: 2px;
+            padding: 0 2px;
+            font-size: .55rem;
+            font-weight: 700;
+            border: 1px solid var(--line);
+            background: transparent;
+            color: var(--text-faint);
+            cursor: default;
+            user-select: none;
+            line-height: 1.4;
+        }
+        .chans .ch .state-btn.on {
+            border-color: var(--good);
+            color: var(--good-fg);
+            background: rgba(107,143,122,.15);
+        }
+        .chans .ch .state-btn.mute-btn.on {
+            border-color: var(--err);
+            color: var(--err-fg);
+            background: rgba(156,95,95,.15);
+        }
+
+        /* Four separate graphic EQ boxes under the level strip */
+        .eqrow {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 2px;
+            margin-top: .35rem;
+        }
+        .eqbox {
+            background: var(--bg-alt);
+            border-radius: 3px;
+            overflow: hidden;
+            border: 1px solid var(--line-soft);
+        }
+        .eqbox svg {
+            display: block;
+            width: 100%;
+            height: 44px;
+        }
+        .eqbox .eqgrid {
+            stroke: var(--line-soft);
+            stroke-width: .5;
+            shape-rendering: crispEdges;
+        }
+        .eqbox .eqmid {
+            stroke: var(--line);
+            stroke-width: .5;
+            shape-rendering: crispEdges;
+        }
+        .eqbox .eqline {
+            fill: none;
+            stroke-width: 1.25;
+            stroke-linejoin: round;
+            stroke-linecap: round;
+        }
 
         .empty {
             color: var(--text-faint);
@@ -340,9 +410,9 @@
             ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 
         let ws = null;
-        const devices = new Map();          // guid -> DeviceInfo (with `serverid`, `kind`, etc.)
-        const subscriptions = new Set();    // guids
-        const settings = new Map();         // guid -> { channels, routing }
+        const devices = new Map();
+        const subscriptions = new Set();
+        const settings = new Map();
 
         // ----------------------------------------------------------------
         // Server info / status
@@ -389,8 +459,6 @@
                 const kind = l.summary?.kind ?? 'none';
                 const full = l.summary?.text ?? '';
                 const short = full.length > TRUNC ? full.slice(0, TRUNC) + '…' : full;
-                // Every log entry carries both. `guid` identifies the device;
-                // `serverid` identifies the bridge. Show the guid.
                 const label = l.guid ?? l.serverid ?? '—';
                 const prefix =
                     kind === 'json' ? 'JSON' :
@@ -466,8 +534,7 @@
         });
 
         // ----------------------------------------------------------------
-        // WebSocket bridge — keyed by `guid` throughout.
-        // Server sends both `guid` (per device) and `serverid` (per bridge).
+        // WebSocket bridge
         // ----------------------------------------------------------------
         function connect() {
             const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -550,6 +617,86 @@
         }
 
         // ----------------------------------------------------------------
+        // Single-output graphic EQ (one per output box)
+        // ----------------------------------------------------------------
+        const EQ_FMIN = 20, EQ_FMAX = 20000;
+        const EQ_FREQS = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000];
+        const EQ_SAMPLES = 48;
+        const EQ_H = 44;
+        const EQ_W = 64;
+        const EQ_PAD = 2;
+
+        function peqContributionDb(band, f) {
+            if (!band || band.bypass) return 0;
+            const f0 = Math.max(1, band.freqHz || 1000);
+            const q = Math.max(0.1, band.q || 1);
+            const x = Math.log2(f / f0);
+            return (band.gainDb || 0) * Math.exp(-(x * x) * 2 * q * q);
+        }
+
+        function crossoverDb(ch, f) {
+            const eq = ch?.eq;
+            if (!eq) return 0;
+            let db = 0;
+            if (eq.lpf && eq.lpf.freqHz) {
+                const fc = Math.max(20, eq.lpf.freqHz);
+                if (f > fc) db -= 12 * Math.log2(f / fc);
+            }
+            if (eq.hpf && eq.hpf.freqHz) {
+                const fc = Math.max(20, eq.hpf.freqHz);
+                if (f < fc) db -= 12 * Math.log2(fc / f);
+            }
+            return db;
+        }
+
+        function totalGainDb(ch, f) {
+            let db = 0;
+            const bands = ch?.eq?.bands;
+            if (Array.isArray(bands)) for (const b of bands) db += peqContributionDb(b, f);
+            db += crossoverDb(ch, f);
+            return db;
+        }
+
+        function freqToX(f, w) {
+            const t = (Math.log2(f) - Math.log2(EQ_FMIN)) / (Math.log2(EQ_FMAX) - Math.log2(EQ_FMIN));
+            return EQ_PAD + t * (w - 2 * EQ_PAD);
+        }
+
+        function dbToY(db, h) {
+            const t = (12 - db) / 24;
+            return EQ_PAD + t * (h - 2 * EQ_PAD);
+        }
+
+        function buildSingleEqSvg(channel, color) {
+            const w = EQ_W, h = EQ_H;
+
+            let grid = '';
+            for (const f of EQ_FREQS) {
+                const x = freqToX(f, w);
+                grid += `<line class="eqgrid" x1="${x.toFixed(2)}" y1="0" x2="${x.toFixed(2)}" y2="${h}"/>`;
+            }
+            for (const db of [-6, 6]) {
+                const y = dbToY(db, h);
+                grid += `<line class="eqgrid" x1="0" y1="${y.toFixed(2)}" x2="${w}" y2="${y.toFixed(2)}"/>`;
+            }
+            const y0 = dbToY(0, h);
+            grid += `<line class="eqmid" x1="0" y1="${y0.toFixed(2)}" x2="${w}" y2="${y0.toFixed(2)}"/>`;
+
+            const pts = [];
+            for (let i = 0; i < EQ_SAMPLES; i++) {
+                const t = i / (EQ_SAMPLES - 1);
+                const f = Math.pow(2, Math.log2(EQ_FMIN) + t * (Math.log2(EQ_FMAX) - Math.log2(EQ_FMIN)));
+                const db = Math.max(-12, Math.min(12, totalGainDb(channel, f)));
+                pts.push(`${freqToX(f, w).toFixed(2)},${dbToY(db, h).toFixed(2)}`);
+            }
+
+            return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+                ${grid}
+                <polyline class="eqline" points="${pts.join(' ')}" stroke="${color}"/>
+            </svg>`;
+        }
+
+        // ----------------------------------------------------------------
         // Rendering
         // ----------------------------------------------------------------
         function render() {
@@ -575,27 +722,49 @@
             const kindPill = `<span class="pill ${esc(d.kind)}">${esc(d.kind)}</span>`;
             const subPill = subscribed ? '<span class="pill sub">sub</span>' : '';
 
+            // Compact routing matrix: 4x4 squares, 5px, no labels.
             let routing = '<div class="empty" style="font-size:.7rem">routing —</div>';
             if (st?.routing?.length) {
-                let rows = '<div class="cell"></div>';
-                for (let i = 0; i < 4; i++) rows += `<div class="cell hdr">In${i + 1}</div>`;
+                let cells = '';
                 for (let out = 0; out < st.routing.length; out++) {
-                    rows += `<div class="cell lbl">O${out + 1}</div>`;
                     for (let bit = 0; bit < 4; bit++) {
                         const on = (st.routing[out] & (1 << bit)) !== 0;
-                        rows += `<div class="cell ${on ? 'on' : ''}">${on ? 'X' : ''}</div>`;
+                        cells += `<div class="cell ${on ? 'on' : ''}"></div>`;
                     }
                 }
-                routing = `<div class="matrix">${rows}</div>`;
+                routing = `<div class="matrix" title="Routing matrix">${cells}</div>`;
             }
 
+            // Compact per-channel strip: num/gain, delay, then mute + polarity
+            // as their own toggle row. Toggle state reflects the actual values.
             let chans = '';
             if (st?.channels?.length) {
-                chans = '<div class="chans">' + st.channels.slice(0, 8).map((ch, i) =>
-                    `<div class="ch ${ch.mute ? 'mute' : ''}">
-                        <span>${i + 1}</span>
-                        <span class="v">${ch.gainDb?.toFixed?.(0) ?? (ch.gainDb ?? '-')}dB</span>
-                    </div>`).join('') + '</div>';
+                chans = '<div class="chans">' + st.channels.slice(0, 8).map((ch, i) => {
+                    const gain = (typeof ch.gainDb === 'number') ? `${ch.gainDb.toFixed(0)}dB` : '—';
+                    const delay = (typeof ch.delayMs === 'number' && ch.delayMs > 0)
+                        ? `${ch.delayMs.toFixed(1)}ms` : '';
+                    const muteOn = !!ch.mute;
+                    const polOn = !!ch.polarity;
+                    return `<div class="ch ${muteOn ? 'mute-on' : ''}">
+                        <div class="row1"><span>${i + 1}</span><span class="v">${gain}</span></div>
+                        <div class="delay">${delay}</div>
+                        <div class="state-row">
+                            <span class="state-btn mute-btn ${muteOn ? 'on' : ''}" title="Mute">M</span>
+                            <span class="state-btn pol-btn ${polOn ? 'on' : ''}" title="Polarity invert">Ø</span>
+                        </div>
+                    </div>`;
+                }).join('') + '</div>';
+            }
+
+            // Four separate graphic EQ boxes under the level strip.
+            let eqrow = '';
+            if (st?.channels?.length >= 8) {
+                const colors = ['var(--eq-c0)', 'var(--eq-c1)', 'var(--eq-c2)', 'var(--eq-c3)'];
+                eqrow = '<div class="eqrow">';
+                for (let i = 4; i < 8; i++) {
+                    eqrow += `<div class="eqbox" title="Output ${i - 3} EQ">${buildSingleEqSvg(st.channels[i], colors[i - 4])}</div>`;
+                }
+                eqrow += '</div>';
             }
 
             return `
@@ -612,6 +781,7 @@
                     <div class="body">
                         ${routing}
                         ${chans}
+                        ${eqrow}
                     </div>
                     <div class="buttons">
                         ${subscribed

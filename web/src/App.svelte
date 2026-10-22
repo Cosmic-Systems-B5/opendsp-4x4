@@ -4,56 +4,40 @@
   import SystemView from "./components/SystemView.svelte";
   import FlashMessage from "./components/FlashMessage.svelte";
 
+  // Bridge lifecycle: server restore + device auto-restore. Runs once per
+  // page load, independent of which view is mounted. Safe to call multiple
+  // times — the bootstrap guards against double-invocation.
+  import { startBridge } from "./state/bridge-bootstrap.svelte.ts";
+  import { device } from "./state/device.svelte.ts";
+  startBridge();
+
+  // Restore the canonical UI model from the single persistent slot before
+  // any hardware state arrives. Runs after `startBridge()` kicks off
+  // restoreConnections(), but before any user interaction.
+  if (typeof localStorage !== "undefined") {
+    void device.restoreDeviceState();
+  }
+
+  // Expose the canonical model on window for console debugging.
+  $effect(() => {
+    (globalThis as any).device = device;
+  });
+
   // Load saved view mode from localStorage, default to "tuning"
   const savedViewMode = typeof localStorage !== "undefined" ? localStorage.getItem("opendsp-view-mode") : null;
   let viewMode = $state<"tuning" | "routing" | "system">(savedViewMode ?? "tuning");
 
-  // Save view mode to localStorage when it changes
   $effect(() => {
     try {
       localStorage.setItem("opendsp-view-mode", viewMode);
-    } catch (e) {
+    } catch {
       // Ignore storage errors
     }
-  });
-
-  // Initialize and restore connection state on page load
-  $effect(() => {
-    const init = async () => {
-      try {
-        // Restore device manager state (devices, servers)
-        // deviceManagerSvelte.restoreConnectionState();
-
-        // Restore device connection state (serverGuid, deviceGuid)
-        // device.restoreConnectionState();
-
-        console.log('Connection state restored');
-
-        // Auto-connect to saved server URLs if available
-        // const urls = device.webSocketUrls;
-        // if (urls.length > 0) {
-        //   for (const url of urls) {
-        //     try {
-        //       console.log(`Attempting auto-connect to ${url}...`);
-        //       await device.connect(url);
-        //       break; // Stop after first successful connection
-        //     } catch (e) {
-        //       console.warn(`Auto-connect failed to ${url}:`, e);
-        //     }
-        //   }
-        // }
-      } catch (e) {
-        console.error('Error restoring connection state:', e);
-      }
-    };
-
-    init();
   });
 
   // Flash message state - supports both auto-dismissing messages and confirmations
   let flashMessage = $state<{ text: string; type: 'success' | 'error' | 'info'; confirm?: boolean } | null>(null);
 
-  // Confirmation callback storage
   let confirmationCallback: ((confirmed: boolean) => void) | null = null;
 
   function showFlash(text: string, type: 'success' | 'error' | 'info' = 'info', confirm = false): Promise<boolean> {
@@ -61,10 +45,8 @@
       flashMessage = { text, type, confirm };
 
       if (confirm) {
-        // Store the callback for when user confirms or cancels
         confirmationCallback = resolve;
 
-        // Also listen for the custom event from FlashMessage component
         const handleConfirm = (e: Event) => {
           const detail = (e as CustomEvent).detail;
           if (detail?.confirmed !== undefined) {
@@ -72,7 +54,6 @@
               confirmationCallback(detail.confirmed);
               confirmationCallback = null;
             }
-            // Only clear flash message after callback is called
             window.setTimeout(() => {
               if (flashMessage?.text === text) {
                 flashMessage = null;
@@ -83,7 +64,6 @@
 
         window.addEventListener('flash-confirm', handleConfirm);
       } else {
-        // Auto-clear after 4 seconds for regular messages
         window.setTimeout(() => {
           if (flashMessage?.text === text && flashMessage.type === type) {
             flashMessage = null;
@@ -93,10 +73,8 @@
     });
   }
 
-  // Export for use in other components
   (globalThis as any).showFlash = showFlash;
 
-  // Listen for flash events from child components (in case they dispatch custom events)
   $effect(() => {
     const handleFlash = (e: Event) => {
       const detail = (e as CustomEvent).detail;
@@ -119,15 +97,7 @@
     <button class="view-btn" class:active={viewMode === "system"} onclick={() => (viewMode = "system")}>System</button>
   </div>
   <span class="spacer"></span>
-<!--  <span class="dot" class:ok={device.connected}></span>-->
-<!--  <span class="status" class:ok={device.connected}>{device.connected ? device.version || device.productName : device.error || "Not connected"}</span>-->
 </header>
-
-<!--{#if !device.connected}-->
-<!--<div class="warn-box">-->
-<!--    Not connected. Select System to configure connection.-->
-<!--</div>-->
-<!--{/if}-->
 
 {#if viewMode === "routing"}
   <PatchBoard />
@@ -147,7 +117,7 @@
   .top { display: flex; align-items: center; gap: .55rem; padding: calc(.6rem + var(--safe-top, 0px)) 1rem .6rem; border-bottom: 1px solid var(--line); background: var(--bg-panel); }
   .view-toggle { display: flex; gap: .25rem; background: var(--bg-elev); padding: .15rem; border-radius: var(--radius); }
   .view-btn { padding: .35rem .7rem; border: none; border-radius: 6px; background: transparent; color: var(--text-dim);
-              font-size: .8rem; cursor: pointer; transition: all .15s; }
+    font-size: .8rem; cursor: pointer; transition: all .15s; }
   .view-btn:hover { color: var(--text); background: rgba(255,255,255,.05); }
   .view-btn.active { background: var(--accent); color: #0a0d12; font-weight: 600; box-shadow: var(--glow); }
   .spacer { flex: 1; }
