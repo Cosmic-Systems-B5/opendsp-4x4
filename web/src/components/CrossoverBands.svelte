@@ -1,6 +1,7 @@
 <script lang="ts">
   // Cross-over bands (HPF and LPF) integrated into PEQ section layout
-  import { device } from "../state/device.svelte.ts";
+  import { activeDevice } from "../state/active-device.svelte.ts";
+  const device = $derived(activeDevice());
   import Param from "./Param.svelte";
   let { index }: { index: number } = $props();
 

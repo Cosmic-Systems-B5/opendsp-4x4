@@ -1,9 +1,14 @@
 // WebSocket connection manager for remote DSP control.
 // Manages WebSocket connections to multiple servers separately from device logic.
-// Supports the bridge.js protocol with JSON-based messaging.
 //
-// This file is a `.svelte.ts` module so that `$state` works at the module
-// level. The exported singleton is reactive.
+// A `.svelte.ts` module so that `$state` works at the module level. The
+// exported singleton is reactive; components re-render when `urls` or
+// `servers` change.
+//
+// Persistence: `urls` (the configured URL list) and `wanted` (per-URL desired
+// connection state) are persisted. On refresh, only URLs the user explicitly
+// connected to are auto-restored; a URL the user disconnected from stays
+// disconnected until they click Connect again.
 
 import { WebSocketTransport } from "../transport/websocket.ts";
 
@@ -34,7 +39,7 @@ export interface DeviceInfo {
 }
 
 export interface ServerConnection {
-  id: string;           // === url
+  id: string;              // === url
   url: string;
   productName: string;
   connectedAt: string | null;
@@ -42,7 +47,6 @@ export interface ServerConnection {
   connecting: boolean;
   serverInfo?: ServerInfo;
   lastError?: string;
-  /** Devices advertised by this server. Filled from `/devices` and SSE. */
   devices: DeviceInfo[];
 }
 
@@ -55,7 +59,9 @@ function loadUrls(): string[] {
   } catch { /* ignore */ }
   return [];
 }
-
+function saveUrls(urls: string[]): void {
+  try { localStorage.setItem(STORAGE_KEY_URLS, JSON.stringify(urls)); } catch { /* ignore */ }
+}
 function loadWanted(): Record<string, boolean> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_WANTED);
@@ -63,23 +69,15 @@ function loadWanted(): Record<string, boolean> {
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === "object") {
       const out: Record<string, boolean> = {};
-      for (const [k, v] of Object.entries(parsed)) {
-        if (typeof v === "boolean") out[k] = v;
-      }
+      for (const [k, v] of Object.entries(parsed)) if (typeof v === "boolean") out[k] = v;
       return out;
     }
   } catch { /* ignore */ }
   return {};
 }
-
 function saveWanted(map: Record<string, boolean>): void {
   try { localStorage.setItem(STORAGE_KEY_WANTED, JSON.stringify(map)); } catch { /* ignore */ }
 }
-
-function saveUrls(urls: string[]): void {
-  try { localStorage.setItem(STORAGE_KEY_URLS, JSON.stringify(urls)); } catch { /* ignore */ }
-}
-
 function httpBase(url: string): string {
   return url.replace(/^ws(s?):\/\//, "http$1://");
 }
@@ -87,8 +85,8 @@ function httpBase(url: string): string {
 class ServerManager {
   urls = $state<string[]>(loadUrls());
   servers = $state<Record<string, ServerConnection>>({});
-  #wanted: Record<string, boolean> = loadWanted();
 
+  #wanted: Record<string, boolean> = loadWanted();
   #transports = new Map<string, WebSocketTransport>();
   #serverInfo = new Map<string, ServerInfo>();
   #reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -140,8 +138,8 @@ class ServerManager {
     const existing = this.servers[url];
     if (existing?.connected || existing?.connecting) return existing ?? null;
 
-    this.#wanted[url] = true;                 // NEW
-    saveWanted(this.#wanted);                 // NEW
+    this.#wanted[url] = true;
+    saveWanted(this.#wanted);
 
     this.#patch(url, { connecting: true, lastError: undefined });
     this.#closing.delete(url);
@@ -185,7 +183,7 @@ class ServerManager {
       this.#closeSse(url);
       if (this.#closing.has(url)) { this.#closing.delete(url); return; }
       this.#patch(url, { connected: false, connecting: false });
-      this.#scheduleReconnect(url);
+      if (this.#wanted[url]) this.#scheduleReconnect(url);
     });
 
     return this.servers[url] ?? null;
@@ -194,6 +192,7 @@ class ServerManager {
   disconnect(url: string): void {
     this.#wanted[url] = false;
     saveWanted(this.#wanted);
+
     const t = this.#transports.get(url);
     this.#closing.add(url);
     this.#cancelReconnect(url);
@@ -212,7 +211,7 @@ class ServerManager {
 
   async restoreConnections(): Promise<void> {
     for (const url of this.urls) {
-      if (!this.#wanted[url]) continue;   // NEW: honour explicit disconnect
+      if (this.#wanted[url] !== true) continue;
       void this.connect(url);
     }
   }
@@ -250,7 +249,6 @@ class ServerManager {
       this.#sse.set(url, sse);
     } catch { /* ignore */ }
   }
-
   #closeSse(url: string): void {
     const sse = this.#sse.get(url);
     if (sse) {
@@ -278,9 +276,7 @@ class ServerManager {
     this.servers = { ...this.servers, [url]: { ...prev, ...patch } };
   }
 
-  #persist(): void {
-    saveUrls(this.urls);
-  }
+  #persist(): void { saveUrls(this.urls); }
 
   async #fetchServerInfo(url: string): Promise<ServerInfo | undefined> {
     try {
@@ -301,6 +297,7 @@ class ServerManager {
     const timer = setTimeout(() => {
       this.#reconnectTimers.delete(url);
       if (this.#closing.has(url) || !this.urls.includes(url)) return;
+      if (!this.#wanted[url]) return;
       void this.connect(url);
     }, delay);
     this.#reconnectTimers.set(url, timer);

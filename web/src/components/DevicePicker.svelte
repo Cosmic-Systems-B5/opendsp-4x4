@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { serverManager } from "../state/server-manager.svelte.ts";
-  import { deviceManager } from "../state/device.manager.svelte.ts";
+  import { deviceManager } from "../state/device-manager.svelte.ts";
   import { DeviceSvelte } from "../state/device.svelte.ts";
 
   let urls = $derived(serverManager.urls);

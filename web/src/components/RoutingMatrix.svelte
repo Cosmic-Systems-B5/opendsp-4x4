@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { device } from "../state/device.svelte.ts";
+  import { activeDevice } from "../state/active-device.svelte.ts";
+  const device = $derived(activeDevice());
   const INS = ["A", "B", "C", "D"];
   const OUTS = ["1", "2", "3", "4"];
   const on = (row: number, col: number) => (device.routing[row]! & (1 << col)) !== 0;

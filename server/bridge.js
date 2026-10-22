@@ -12,8 +12,13 @@
 // a UI can remember a device by its publishedId and expect it to refer
 // to the same physical device (HID path) or mock slot on reconnect.
 //
-// Serial numbers are intentionally NOT exposed. GUIDs are stable per
-// physical device (HID path) or per mock slot (mock-device-N).
+// Mock devices obey the real protocol. Every reply is generated from
+// device.settings using the same unit conversions as the client
+// (protocol/blocks.ts, protocol/control.ts, protocol/readback.ts),
+// so writes → readback is a faithful round-trip.
+//
+// DEBUG_FRAMES=true (default) logs every inbound request and outbound
+// reply as a full 64-byte hex frame, prefixed [TX] / [RX] / [MOCK-RX].
 
 import { createServer } from 'node:http';
 import { readFile, mkdir, writeFile, rename } from 'node:fs/promises';
@@ -34,31 +39,140 @@ const PORT = Number(process.env.PORT) || 8765;
 const MOCK_DEVICE_COUNT = Math.max(1, Number(process.env.MOCK_DEVICES) || 4);
 const PUBLIC_DIR = join(fileURLToPath(new URL('.', import.meta.url)), 'public');
 
-// Bind to loopback by default. Set BRIDGE_HOST=0.0.0.0 to expose on LAN
-// (do this only if you understand that any origin can then drive HID).
 const BIND_HOST = process.env.BRIDGE_HOST || '127.0.0.1';
-
-// Cap on incoming WS frame size. A single HID report is 64 bytes; base64
-// inflates that to ~88 chars; JSON envelope is small. 64 KiB is generous.
 const MAX_WS_PAYLOAD = 64 * 1024;
-
-// Max HID report length we will forward to a device. The device protocol
-// uses fixed 64-byte reports.
 const MAX_HID_REPORT_BYTES = 64;
 
-// Where to persist SERVER_ID + device GUID registry.
+// Verbose hex frame logging. On by default so you can paste captures here.
+const DEBUG_FRAMES = process.env.DEBUG_FRAMES !== 'false';
+
 const STATE_DIR = process.env.BRIDGE_STATE_DIR
-    || join(homedir(), '.opendsp-bridge');
+    || join(homedir(), '.opendsp-bridge', `port-${PORT}`);
 const STATE_FILE = join(STATE_DIR, 'registry.json');
 
 let mockMode = process.env.MOCK_MODE === 'true';
+
+// ---------------------------------------------------------------------------
+// Protocol constants (must match src/protocol/commands.ts on the client)
+// ---------------------------------------------------------------------------
+
+const DLE = 0x10, STX = 0x02, ETX = 0x03;
+const REQUEST_ADDR = 0x01;
+
+const Command = {
+    GET_STATUS: 0x10,
+    INIT_DONE: 0x12,
+    GET_VERSION: 0x13,
+    GET_FLAG: 0x14,
+    GET_FLAGS_BLOCK: 0x22,
+    READ_CHANNEL: 0x27,
+    READ_PRESET_NAME: 0x29,
+    GET_CONFIG: 0x2c,
+    REPLY_CHANNEL: 0x24,
+    RECALL_PRESET: 0x20,
+    STORE_PRESET: 0x21,
+    SET_NAME: 0x26,
+    SET_PASSWORD: 0x2f,
+    TEST_TONE: 0x39,
+    COMPRESSOR: 0x30,
+    CROSSOVER_LPF: 0x31,
+    CROSSOVER_HPF: 0x32,
+    PEQ_BAND: 0x33,
+    LEVEL: 0x34,
+    MUTE: 0x35,
+    POLARITY: 0x36,
+    DELAY: 0x38,
+    GATE: 0x3e,
+    ROUTING: 0x3a,
+    READBACK_LEVELS: 0x40,
+    GET_VERSION_FW: 0x52,
+};
+
+const KNOWN_COMMANDS = {
+    0x10: "GET_STATUS", 0x12: "INIT_DONE", 0x13: "GET_VERSION", 0x14: "GET_FLAG",
+    0x20: "RECALL_PRESET", 0x21: "STORE_PRESET", 0x22: "GET_FLAGS_BLOCK",
+    0x24: "REPLY_CHANNEL", 0x26: "SET_NAME", 0x27: "READ_CHANNEL",
+    0x29: "READ_PRESET_NAME", 0x2c: "GET_CONFIG", 0x2f: "SET_PASSWORD",
+    0x39: "TEST_TONE", 0x30: "COMPRESSOR", 0x31: "CROSSOVER_LPF",
+    0x32: "CROSSOVER_HPF", 0x33: "PEQ_BAND", 0x34: "LEVEL", 0x35: "MUTE",
+    0x36: "POLARITY", 0x38: "DELAY", 0x3a: "ROUTING", 0x3e: "GATE",
+    0x40: "READBACK_LEVELS", 0x52: "GET_VERSION_FW",
+};
+
+function cmdName(code) {
+    return KNOWN_COMMANDS[code] ?? `UNKNOWN_0x${(code ?? 0).toString(16)}`;
+}
+
+const Slope = {
+    BYPASS: 0x00, BW6: 0x01, BL6: 0x02, BW12: 0x03, BL12: 0x04, LK12: 0x05,
+    BW18: 0x06, BL18: 0x07, BW24: 0x08, BL24: 0x09, LK24: 0x0a,
+};
+
+const PeqType = {
+    PEAK: 0x00, LOW_SHELF: 0x01, HIGH_SHELF: 0x02, LOW_PASS: 0x03,
+    HIGH_PASS: 0x04, ALLPASS1: 0x05, ALLPASS2: 0x06,
+};
+
+const CH_IN_A = 0x00, CH_IN_B = 0x01, CH_IN_C = 0x02, CH_IN_D = 0x03;
+const CH_OUT_1 = 0x04, CH_OUT_2 = 0x05, CH_OUT_3 = 0x06, CH_OUT_4 = 0x07;
+
+// ---------------------------------------------------------------------------
+// Protocol helpers (mirror src/protocol/frame.ts + blocks.ts + control.ts)
+// ---------------------------------------------------------------------------
+
+function frameChecksum(payload) {
+    let x = 0;
+    for (let i = 0; i < payload.length; i++) x ^= payload[i];
+    return (x ^ 1) & 0xff;
+}
+
+function buildReplyFrame(payload) {
+    const out = new Uint8Array(MAX_HID_REPORT_BYTES).fill(0);
+    const wrapped = [DLE, STX, ...payload.map(b => b & 0xff), DLE, ETX, frameChecksum(payload)];
+    if (wrapped.length > MAX_HID_REPORT_BYTES) {
+        throw new Error(`reply too large: ${wrapped.length} > ${MAX_HID_REPORT_BYTES}`);
+    }
+    out.set(wrapped, 0);
+    return out;
+}
+
+function parseRequest(bytes) {
+    if (bytes[0] !== DLE || bytes[1] !== STX) return null;
+    const N = bytes[4] ?? 0;
+    const plen = N + 3;
+    const payload = bytes.slice(2, 2 + plen);
+    const code = payload[3] ?? 0;
+    const data = payload.slice(4, 3 + N);
+    return { payload, code, data };
+}
+
+// ---------------------------------------------------------------------------
+// Unit conversions (mirror src/protocol/blocks.ts + control.ts)
+// ---------------------------------------------------------------------------
+
+const GAIN_ZERO_DB = 281;
+const GAIN_UNITS_PER_DB = 10;
+const GAIN_MAX_RAW = 400;
+const gainDbToRaw = (db) => Math.max(0, Math.min(GAIN_MAX_RAW, Math.round(GAIN_ZERO_DB + db * GAIN_UNITS_PER_DB)));
+const gainRawToDb = (raw) => (raw - GAIN_ZERO_DB) / GAIN_UNITS_PER_DB;
+
+const thresholdDbToRaw = (db) => Math.round((db + 90) * 2);
+const thresholdRawToDb = (raw) => raw / 2 - 90;
+
+const msToSamples = (ms) => Math.max(0, Math.min(32640, Math.round(ms * 48)));
+const samplesToMs = (s) => s / 48;
+
+const hzToPeqIndex = (hz) => Math.max(0, Math.min(300, Math.round(30 * Math.log2(hz / 19.7))));
+const peqIndexToHz = (i) => 19.7 * Math.pow(2, i / 30);
+
+const qToRaw = (q) => Math.max(0, Math.min(255, Math.round(q * 10)));
+const rawToQ = (raw) => raw / 10;
 
 // ---------------------------------------------------------------------------
 // Identifier generation + persistence
 // ---------------------------------------------------------------------------
 
 const ID_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-
 function randomId(len) {
     const bytes = new Uint8Array(len);
     crypto.getRandomValues(bytes);
@@ -67,11 +181,7 @@ function randomId(len) {
     return out;
 }
 
-// Persistent state: { serverId, deviceGuids: { [key]: "DSPxxxxx" } }
-const persistedState = {
-    serverId: null,
-    deviceGuids: {},
-};
+const persistedState = { serverId: null, deviceGuids: {} };
 
 async function loadState() {
     try {
@@ -102,7 +212,7 @@ function scheduleStateSave() {
             await mkdir(STATE_DIR, { recursive: true });
             const tmp = STATE_FILE + '.tmp';
             await writeFile(tmp, JSON.stringify(persistedState, null, 2));
-            await rename(tmp, STATE_FILE); // atomic on POSIX
+            await rename(tmp, STATE_FILE);
         } catch (e) {
             console.warn(`Could not persist state: ${e.message}`);
         }
@@ -124,15 +234,11 @@ function ensureDeviceGuid(key) {
     return persistedState.deviceGuids[key];
 }
 
-function publishedId(guid) {
-    return `${SERVER_ID}-${guid}`;
-}
+function publishedId(guid) { return `${SERVER_ID}-${guid}`; }
 
 function getAllDeviceGuids() {
     return Object.entries(persistedState.deviceGuids).map(([key, guid]) => ({
-        key,
-        guid,
-        publishedId: publishedId(guid),
+        key, guid, publishedId: publishedId(guid),
     }));
 }
 
@@ -155,51 +261,7 @@ function listHidDevices() {
 }
 
 // ---------------------------------------------------------------------------
-// Protocol (DLE / STX / ETX framing)
-// ---------------------------------------------------------------------------
-
-const DLE = 0x10, STX = 0x02, ETX = 0x03;
-
-function frameChecksum(bytes) {
-    let x = 0;
-    for (let i = 0; i < bytes.length; i++) x ^= bytes[i];
-    // LSB inverted per device protocol.
-    return (x ^ 1) & 0xff;
-}
-
-// Build a 64-byte report. Throws if the payload doesn't fit so a bad
-// call-site is caught immediately rather than silently truncated.
-function buildReplyFrame(payload) {
-    const payloadWithHeader = [0x01, 0x00, 1 + payload.length, ...payload];
-    const checksum = frameChecksum(payloadWithHeader);
-
-    // DLE STX <payloadWithHeader> DLE ETX <checksum>
-    const totalLen = 2 + payloadWithHeader.length + 2 + 1;
-    if (totalLen > MAX_HID_REPORT_BYTES) {
-        throw new Error(
-            `Reply payload too large: ${payload.length} bytes (framed ${totalLen} > ${MAX_HID_REPORT_BYTES})`,
-        );
-    }
-    if (payloadWithHeader.length > 0xff) {
-        throw new Error('Reply payload length exceeds length-byte limit');
-    }
-
-    const report = new Uint8Array(MAX_HID_REPORT_BYTES).fill(0);
-    let pos = 0;
-    report[pos++] = DLE;
-    report[pos++] = STX;
-    for (const b of payloadWithHeader) report[pos++] = b & 0xff;
-    report[pos++] = DLE;
-    report[pos++] = ETX;
-    report[pos] = checksum;
-    return report;
-}
-
-const b64encode = (bytes) => Buffer.from(bytes).toString('base64');
-const b64decode = (str) => Array.from(Buffer.from(str, 'base64'));
-
-// ---------------------------------------------------------------------------
-// Logs
+// Logs + hex frame dumps
 // ---------------------------------------------------------------------------
 
 const connectionLogs = [];
@@ -209,6 +271,29 @@ function bytesToHex(bytes) {
     return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(' ');
 }
 
+// Compact dump: return the first `n` bytes plus "…" if truncated.
+function hexDump(bytes, n = 64) {
+    const arr = Array.from(bytes);
+    const head = arr.slice(0, n).map(b => b.toString(16).padStart(2, '0')).join(' ');
+    return arr.length > n ? `${head} …(${arr.length} bytes)` : head;
+}
+
+// Verbose frame log: direction + device tag + full hex.
+// direction: "TX" (host→device: what the client sent), "RX" (device→host: mock reply),
+//            "HID-RX" (device→host: real HID report), "HID-TX" (host→device: real HID write).
+function logFrame(direction, device, bytes, extra) {
+    if (!DEBUG_FRAMES) return;
+    const id = device ? (device.id ?? '?') : '?';
+    const guid = device ? (device.deviceGuid ?? '?') : '?';
+    const tag = `[${direction}] ${id} (${guid})`;
+    const parsed = parseRequest(Array.from(bytes));
+    const meta = parsed
+        ? `code=0x${parsed.code.toString(16).padStart(2, '0')} (${cmdName(parsed.code)}) N=${parsed.payload[2] ?? '?'} data=${parsed.data.length}B`
+        : 'unparsable';
+    const suffix = extra ? ` ${extra}` : '';
+    console.log(`${tag} ${meta}${suffix}\n  ${hexDump(bytes, 64)}`);
+}
+
 function tryDecodeString(bytes) {
     const printable = bytes.filter(b => b >= 32 && b < 127);
     if (printable.length > bytes.length * 0.5) {
@@ -216,13 +301,10 @@ function tryDecodeString(bytes) {
     }
     return null;
 }
-
 function addConnectionLog(entry) {
     connectionLogs.unshift(entry);
     if (connectionLogs.length > MAX_LOGS) connectionLogs.pop();
 }
-
-// Returns a summary object; does NOT mutate `entry`.
 function summarizeEntry(entry) {
     if (entry.payloadHex) return { kind: 'hex', text: entry.payloadHex };
     if (entry.payloadJson) return { kind: 'json', text: entry.payloadJson };
@@ -231,10 +313,7 @@ function summarizeEntry(entry) {
             const bytes = b64decode(entry.payloadBase64);
             const str = tryDecodeString(bytes);
             if (str && /^[\s[{]/.test(str)) {
-                try {
-                    const json = JSON.stringify(JSON.parse(str));
-                    return { kind: 'json', text: json };
-                } catch { /* not JSON */ }
+                try { return { kind: 'json', text: JSON.stringify(JSON.parse(str)) }; } catch { /* ignore */ }
             }
             return { kind: 'hex', text: bytesToHex(bytes) };
         } catch { /* ignore */ }
@@ -242,9 +321,6 @@ function summarizeEntry(entry) {
     if (entry.payloadText) return { kind: 'text', text: entry.payloadText };
     return { kind: 'none', text: '' };
 }
-
-// Build a derived log record (input is not mutated). Decodes base64 payload
-// into hex / text / json as appropriate.
 function makeMessageLog(entry) {
     const out = { ...entry };
     if (entry.payload && typeof entry.payload === 'string' && !out.payloadHex && !out.payloadBase64) {
@@ -254,20 +330,13 @@ function makeMessageLog(entry) {
             out.payloadHex = bytesToHex(bytes);
             const str = tryDecodeString(bytes);
             if (str && /^[\s[{]/.test(str)) {
-                try {
-                    out.payloadJson = JSON.stringify(JSON.parse(str));
-                } catch { /* fall through to hex */ }
-            } else if (str) {
-                out.payloadText = str;
-            }
-        } catch {
-            out.payloadText = entry.payload;
-        }
+                try { out.payloadJson = JSON.stringify(JSON.parse(str)); } catch { /* ignore */ }
+            } else if (str) { out.payloadText = str; }
+        } catch { out.payloadText = entry.payload; }
     }
     out.summary = summarizeEntry(out);
     return out;
 }
-
 function addMessageLog(entry) {
     const rec = makeMessageLog(entry);
     messageLogs.unshift(rec);
@@ -275,31 +344,194 @@ function addMessageLog(entry) {
     return rec;
 }
 
+const b64encode = (bytes) => Buffer.from(bytes).toString('base64');
+const b64decode = (str) => Array.from(Buffer.from(str, 'base64'));
+
 // ---------------------------------------------------------------------------
-// DeviceSvelte registry
+// Per-mock settings
 // ---------------------------------------------------------------------------
 
-const devices = new Map(); // id -> DeviceRecord
-const openingPaths = new Set(); // guards openHidDevice against re-entry
+const DEFAULT_BAND_FREQS = [60, 150, 400, 1000, 2500, 6000, 12000];
+const IN_NAMES = ['In A', 'In B', 'In C', 'In D'];
+const OUT_NAMES = ['Out 1', 'Out 2', 'Out 3', 'Out 4'];
+const RANDOM_IN_NAMES = ['Kick', 'Snare', 'Bass', 'Gtr', 'Vox', 'Keys', 'Aux', 'FX'];
+const RANDOM_OUT_NAMES = ['Main L', 'Main R', 'Sub', 'Fill', 'Mon 1', 'Mon 2', 'Rec', 'Spare'];
 
-const DEFAULT_SETTINGS = () => ({
-    channels: Array.from({ length: 8 }, (_, i) => ({
+function defaultChannelFor(i) {
+    const isOutput = i >= 4;
+    return {
         index: i,
-        name: `Channel ${i}`,
+        name: isOutput ? OUT_NAMES[i - 4] : IN_NAMES[i],
         gainDb: 0,
         mute: false,
         polarity: false,
-        delayMs: null,
-        eq: {
-            hpf: { freqHz: 20, slope: -12 },
-            lpf: { freqHz: 20000, slope: -12 },
-            bands: Array.from({ length: 7 }, (_, b) => ({
-                type: 'peak', freqHz: 1000 * (b + 1), gainDb: 0, bwOct: 1,
+        delayMs: isOutput ? 0 : null,
+        eq: isOutput ? {
+            hpf: { freqHz: 20, slopeCode: Slope.BYPASS },
+            lpf: { freqHz: 20000, slopeCode: Slope.BYPASS },
+            bands: DEFAULT_BAND_FREQS.map(f => ({
+                type: PeqType.PEAK, freqHz: f, gainDb: 0, q: 1, bypass: true,
             })),
-        },
-    })),
-    routing: [0x01, 0x02, 0x04, 0x08],
-});
+        } : undefined,
+        comp: isOutput ? { ratioIndex: 0, kneeDb: 0, attackMs: 50, releaseMs: 500, thresholdDb: 20 } : undefined,
+        gate: !isOutput ? { thresholdDb: -90, attackMs: 50, holdMs: 100, releaseMs: 500 } : undefined,
+    };
+}
+function defaultSettings() {
+    return {
+        presetName: 'Init',
+        channels: Array.from({ length: 8 }, (_, i) => defaultChannelFor(i)),
+        routing: [0x01, 0x02, 0x04, 0x08],
+    };
+}
+
+function randDb(lo = -24, hi = 6) { return Math.round((lo + Math.random() * (hi - lo)) * 10) / 10; }
+function randomBand(idx) {
+    const anchors = [40, 90, 200, 500, 1200, 3500, 9000];
+    const base = anchors[idx] ?? 1000;
+    return {
+        type: PeqType.PEAK,
+        freqHz: Math.round(base * (0.85 + Math.random() * 0.3)),
+        gainDb: Math.round((-12 + Math.random() * 18) * 10) / 10,
+        q: Math.round((0.4 + Math.random() * 6) * 100) / 100,
+        bypass: Math.random() < 0.25,
+    };
+}
+function randomRoutingMask() {
+    const modes = [
+        () => 1 << Math.floor(Math.random() * 4),
+        () => (1 << Math.floor(Math.random() * 4)) | (1 << Math.floor(Math.random() * 4)),
+        () => 0x0f,
+    ];
+    const mask = modes[Math.floor(Math.random() * modes.length)]() & 0x0f;
+    return mask === 0 ? 0x01 : mask;
+}
+const SLOPE_CODES = [Slope.BW12, Slope.BW24, Slope.BL12, Slope.BL24];
+
+function generateRandomSettings() {
+    const channels = Array.from({ length: 8 }, (_, i) => {
+        const isOutput = i >= 4;
+        const names = isOutput ? RANDOM_OUT_NAMES : RANDOM_IN_NAMES;
+        const name = names[i % names.length] ?? `Ch ${i}`;
+        return {
+            index: i,
+            name,
+            gainDb: randDb(-24, 6),
+            mute: Math.random() < 0.1,
+            polarity: Math.random() < 0.05,
+            delayMs: isOutput ? Math.round(Math.random() * 300) / 10 : null,
+            eq: isOutput ? {
+                hpf: {
+                    freqHz: [20, 40, 60, 80, 100, 120][Math.floor(Math.random() * 6)],
+                    slopeCode: SLOPE_CODES[Math.floor(Math.random() * SLOPE_CODES.length)],
+                },
+                lpf: {
+                    freqHz: [8000, 12000, 16000, 20000][Math.floor(Math.random() * 4)],
+                    slopeCode: SLOPE_CODES[Math.floor(Math.random() * SLOPE_CODES.length)],
+                },
+                bands: Array.from({ length: 7 }, (_, b) => randomBand(b)),
+            } : undefined,
+            comp: isOutput ? {
+                ratioIndex: Math.floor(Math.random() * 16),
+                kneeDb: Math.round(Math.random() * 24),
+                attackMs: [5, 10, 20, 50][Math.floor(Math.random() * 4)],
+                releaseMs: [100, 200, 500, 1000][Math.floor(Math.random() * 4)],
+                thresholdDb: Math.round(-30 + Math.random() * 30),
+            } : undefined,
+            gate: !isOutput ? {
+                thresholdDb: Math.round(-90 + Math.random() * 40),
+                attackMs: [10, 20, 50][Math.floor(Math.random() * 3)],
+                holdMs: [50, 100, 200][Math.floor(Math.random() * 3)],
+                releaseMs: [200, 500, 1000][Math.floor(Math.random() * 3)],
+            } : undefined,
+        };
+    });
+    return {
+        presetName: `Random ${Math.floor(Math.random() * 100)}`,
+        channels,
+        routing: Array.from({ length: 4 }, () => randomRoutingMask()),
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Build the 450-byte preset image from device.settings.
+// Layout mirrors src/protocol/readback.ts exactly.
+// ---------------------------------------------------------------------------
+
+function writeAscii(img, off, len, str) {
+    const clean = String(str ?? '').slice(0, len);
+    for (let i = 0; i < len; i++) img[off + i] = i < clean.length ? clean.charCodeAt(i) & 0x7f : 0;
+}
+function writeU16(img, off, v) {
+    const u = Math.max(0, Math.min(0xffff, v | 0));
+    img[off] = u & 0xff;
+    img[off + 1] = (u >> 8) & 0xff;
+}
+
+function buildPresetImage(device) {
+    const img = new Uint8Array(450);
+    writeAscii(img, 2, 14, device.settings.presetName);
+
+    const inputOffsets = [16, 40, 64, 88];
+    for (let i = 0; i < 4; i++) {
+        const ch = device.settings.channels[i];
+        const b = inputOffsets[i];
+        if (!ch) continue;
+        writeAscii(img, b + 0, 10, ch.name);
+        const g = ch.gate ?? { attackMs: 0, releaseMs: 0, holdMs: 0, thresholdDb: -90 };
+        writeU16(img, b + 10, g.attackMs ?? 0);
+        writeU16(img, b + 12, g.releaseMs ?? 0);
+        writeU16(img, b + 14, g.holdMs ?? 0);
+        writeU16(img, b + 16, thresholdDbToRaw(g.thresholdDb ?? -90));
+        writeU16(img, b + 18, gainDbToRaw(ch.gainDb ?? 0));
+        img[b + 20] = ch.polarity ? 1 : 0;
+    }
+
+    const outputOffsets = [112, 186, 260, 334];
+    for (let i = 0; i < 4; i++) {
+        const ch = device.settings.channels[4 + i];
+        const b = outputOffsets[i];
+        if (!ch) continue;
+        writeAscii(img, b + 0, 8, ch.name);
+        img[b + 8] = device.settings.routing[i] ?? 0;
+        writeU16(img, b + 10, hzToPeqIndex(ch.eq?.hpf?.freqHz ?? 20));
+        writeU16(img, b + 12, hzToPeqIndex(ch.eq?.lpf?.freqHz ?? 20000));
+        img[b + 14] = ch.eq?.hpf?.slopeCode ?? Slope.BYPASS;
+        img[b + 15] = ch.eq?.lpf?.slopeCode ?? Slope.BYPASS;
+
+        for (let band = 0; band < 7; band++) {
+            const rec = b + 16 + band * 6;
+            const data = ch.eq?.bands?.[band] ?? {
+                type: PeqType.PEAK, freqHz: 1000, gainDb: 0, q: 1, bypass: true,
+            };
+            const gainRaw = Math.max(0, Math.min(240, Math.round(120 + (data.gainDb ?? 0) * 10)));
+            writeU16(img, rec + 0, gainRaw);
+            writeU16(img, rec + 2, hzToPeqIndex(data.freqHz));
+            img[rec + 4] = qToRaw(data.q ?? 1);
+            img[rec + 5] = data.type ?? PeqType.PEAK;
+        }
+
+        const c = ch.comp ?? { ratioIndex: 0, kneeDb: 0, attackMs: 50, releaseMs: 500, thresholdDb: 20 };
+        img[b + 58] = c.ratioIndex ?? 0;
+        img[b + 59] = Math.max(0, Math.min(255, c.kneeDb ?? 0));
+        writeU16(img, b + 60, c.attackMs ?? 0);
+        writeU16(img, b + 62, c.releaseMs ?? 0);
+        writeU16(img, b + 64, thresholdDbToRaw(c.thresholdDb ?? 20));
+
+        writeU16(img, b + 66, gainDbToRaw(ch.gainDb ?? 0));
+        img[b + 68] = ch.polarity ? 1 : 0;
+        writeU16(img, b + 70, msToSamples(ch.delayMs ?? 0));
+    }
+
+    return img;
+}
+
+// ---------------------------------------------------------------------------
+// Device registry
+// ---------------------------------------------------------------------------
+
+const devices = new Map();
+const openingPaths = new Set();
 
 function makeDeviceRecord({ id, kind, path, product, hidHandle = null, slotKey = null }) {
     const key = slotKey || path || id;
@@ -313,7 +545,7 @@ function makeDeviceRecord({ id, kind, path, product, hidHandle = null, slotKey =
         publishedId: publishedId(guid),
         hid: hidHandle,
         subscribers: new Set(),
-        settings: DEFAULT_SETTINGS(),
+        settings: kind === 'mock' ? generateRandomSettings() : defaultSettings(),
         connectedAt: new Date().toISOString(),
         mockResponseDelayMs: 15,
         closing: false,
@@ -321,58 +553,213 @@ function makeDeviceRecord({ id, kind, path, product, hidHandle = null, slotKey =
 }
 
 // ---------------------------------------------------------------------------
-// Mock plumbing
+// Apply a write frame to device.settings (mirrors blocks.ts / control.ts)
 // ---------------------------------------------------------------------------
 
-function mockReplyForCommand(bytes) {
-    let payloadStart = -1, payloadEnd = -1;
-    for (let i = 0; i < bytes.length - 4; i++) {
-        if (bytes[i] === DLE && bytes[i + 1] === STX) payloadStart = i + 2;
-        if (payloadStart >= 0 && bytes[i] === DLE && bytes[i + 1] === ETX) {
-            payloadEnd = i;
-            break;
-        }
-    }
-    if (payloadStart < 0 || payloadEnd <= payloadStart) return null;
+function applyWrite(device, code, data) {
+    const s = device.settings;
+    if (!s) return false;
+    const ch = data[0];
+    const c = s.channels[ch];
 
-    const code = bytes.slice(payloadStart, payloadEnd)[3];
     switch (code) {
-        case 0x10: return [0x01, 0x00, 0x01, 0x02];
-        case 0x12: return [0x01, 0x00, 0x01, 0x01];
-        case 0x13: {
+        case Command.LEVEL: {
+            if (!c) return false;
+            const raw = data[1] | (data[2] << 8);
+            c.gainDb = gainRawToDb(raw);
+            return true;
+        }
+        case Command.MUTE: {
+            if (!c) return false;
+            c.mute = data[1] === 1;
+            return true;
+        }
+        case Command.POLARITY: {
+            if (!c) return false;
+            c.polarity = data[1] === 1;
+            return true;
+        }
+        case Command.DELAY: {
+            if (!c) return false;
+            c.delayMs = samplesToMs(data[1] | (data[2] << 8));
+            return true;
+        }
+        case Command.ROUTING: {
+            const outIdx = ch - CH_OUT_1;
+            if (outIdx >= 0 && outIdx < s.routing.length) s.routing[outIdx] = data[1] & 0x0f;
+            return true;
+        }
+        case Command.PEQ_BAND: {
+            if (!c?.eq) return false;
+            const rec = c.eq.bands[data[1] ?? 0];
+            if (!rec) return;
+            rec.gainDb = Math.round((((data[2] | (data[3] << 8)) - 120) / 10) * 10) / 10;
+            rec.freqHz = peqIndexToHz(data[4] | (data[5] << 8));
+            rec.q = rawToQ(data[6]);
+            rec.type = data[7];
+            rec.bypass = !!data[8];
+            return true;
+        }
+        case Command.CROSSOVER_HPF: {
+            if (!c?.eq) return false;
+            c.eq.hpf.freqHz = peqIndexToHz(data[1] | (data[2] << 8));
+            c.eq.hpf.slopeCode = data[3] ?? Slope.BYPASS;
+            return true;
+        }
+        case Command.CROSSOVER_LPF: {
+            if (!c?.eq) return false;
+            c.eq.lpf.freqHz = peqIndexToHz(data[1] | (data[2] << 8));
+            c.eq.lpf.slopeCode = data[3] ?? Slope.BYPASS;
+            return true;
+        }
+        case Command.COMPRESSOR: {
+            if (!c?.comp) return false;
+            c.comp.ratioIndex = data[1] ?? c.comp.ratioIndex;
+            c.comp.kneeDb = data[2] ?? c.comp.kneeDb;
+            c.comp.attackMs = data[3] | (data[4] << 8);
+            c.comp.releaseMs = data[5] | (data[6] << 8);
+            c.comp.thresholdDb = thresholdRawToDb(data[7] | (data[8] << 8));
+            return true;
+        }
+        case Command.GATE: {
+            if (!c?.gate) return false;
+            c.gate.attackMs = data[1] | (data[2] << 8);
+            c.gate.releaseMs = data[3] | (data[4] << 8);
+            c.gate.holdMs = data[5] | (data[6] << 8);
+            c.gate.thresholdDb = thresholdRawToDb(data[7] | (data[8] << 8));
+            return true;
+        }
+        case Command.SET_NAME: {
+            const str = String.fromCharCode(...data.slice(0, 14)).replace(/\0[\s\S]*$/, '').trim();
+            if (str) s.presetName = str;
+            return true;
+        }
+
+        // Read-only and no-op commands must return false.
+        case Command.GET_STATUS:
+        case Command.GET_VERSION:
+        case Command.GET_FLAG:
+        case Command.GET_FLAGS_BLOCK:
+        case Command.GET_CONFIG:
+        case Command.READ_CHANNEL:
+        case Command.READ_PRESET_NAME:
+        case Command.READBACK_LEVELS:
+        case Command.RECALL_PRESET:
+        case Command.STORE_PRESET:
+        case Command.SET_PASSWORD:
+        case Command.TEST_TONE:
+            return false;
+
+        default:
+            return false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Mock replies
+// ---------------------------------------------------------------------------
+
+function mockReply(device, code, data) {
+    switch (code) {
+        case Command.GET_STATUS:
+            return [0x01, 0x00, 0x02, 0x10, 0x1f];
+        case Command.INIT_DONE:
+            return [0x01, 0x00, 0x01, 0x01];
+        case Command.GET_VERSION: {
             const v = '4x4MINIPRO V010';
-            const out = [0x01, 0x00, 1 + v.length, 0x52];
-            for (const c of v) out.push(c.charCodeAt(0));
+            const out = [0x01, 0x00, 0x01 + v.length, 0x52];
+            for (let i = 0; i < v.length; i++) out.push(v.charCodeAt(i) & 0xff);
             return out;
         }
-        case 0x20:
-        case 0x21: return [0x01, 0x00, 0x01, 0x01];
-        case 0x27: {
-            // 54-byte settings blob: [0x01, 0x00, len, 0x27, <50 bytes>]
-            // len = total blob length = 54.
-            const out = new Array(54).fill(0);
-            out[0] = 0x01;
-            out[1] = 0x00;
-            out[2] = 54;    // length field (matches 0x34 in original, verified)
-            out[3] = 0x27;  // command code — FIX: was 0x24 in original
+        case Command.GET_FLAG:
+            return [0x01, 0x00, 0x02, 0x14, 0x00];
+        case Command.GET_FLAGS_BLOCK: {
+            const out = [0x01, 0x00, 30 + 1, 0x22];
+            for (let i = 0; i < 30; i++) out.push(0);
             return out;
         }
-        case 0x30: case 0x31: case 0x32: case 0x33:
-        case 0x34: case 0x35: case 0x36: case 0x38:
-        case 0x3a: case 0x3e: return [0x01, 0x00, 0x01, 0x01];
-        case 0x40: {
-            const out = new Array(13).fill(0);
-            out[0] = 0x01; out[2] = 0x0c; out[3] = 0x40;
+        case Command.GET_CONFIG: {
+            const out = [0x01, 0x00, 8, 0x2c];
+            for (let i = 0; i < 7; i++) out.push(0);
             return out;
         }
-        default: return null;
+        case Command.READ_PRESET_NAME: {
+            const name = device.settings.presetName ?? '';
+            const out = [0x01, 0x00, 1 + 14, 0x29];
+            for (let i = 0; i < 14; i++) out.push(i < name.length ? name.charCodeAt(i) & 0x7f : 0);
+            return out;
+        }
+        case Command.READ_CHANNEL: {
+            const index = data[0] ?? 0;
+            const img = buildPresetImage(device);
+            const page = img.slice(index * 50, index * 50 + 50);
+            // N = 1 + data.length. data = [index, ...50 page bytes] → N = 52.
+            const out = [0x01, 0x00, 52, Command.REPLY_CHANNEL, index];
+            for (let i = 0; i < 50; i++) out.push(page[i] ?? 0);
+            return out;
+        }
+        case Command.READBACK_LEVELS: {
+            const out = [0x01, 0x00, 25, 0x40];
+            for (let i = 0; i < 8; i++) {
+                const ch = device.settings.channels[i];
+                const on = ch && ch.mute !== true && ch.gainDb > -60;
+                out.push(on ? Math.floor(30 + Math.random() * 42) : 0, 0, 0);
+            }
+            return out;
+        }
+        case Command.TEST_TONE:
+        case Command.RECALL_PRESET:
+        case Command.STORE_PRESET:
+        case Command.SET_PASSWORD:
+        case Command.SET_NAME:
+        case Command.LEVEL:
+        case Command.MUTE:
+        case Command.POLARITY:
+        case Command.DELAY:
+        case Command.ROUTING:
+        case Command.PEQ_BAND:
+        case Command.CROSSOVER_HPF:
+        case Command.CROSSOVER_LPF:
+        case Command.COMPRESSOR:
+        case Command.GATE:
+            return [0x01, 0x00, 0x01, 0x01];
+        default:
+            return null;
     }
 }
 
 function handleMockWrite(device, bytes) {
-    const reply = mockReplyForCommand(bytes);
+    let parsed;
+    try { parsed = parseRequest(bytes); }
+    catch (e) {
+        console.error(`parseRequest threw on ${device.id}:`, e.message);
+        return;
+    }
+    if (!parsed) return false;
+
+    // Log the inbound request (host → device) before responding.
+    logFrame('TX', device, bytes, `-> mock ${cmdName(parsed.code)} data=[${parsed.data.map(b => b.toString(16).padStart(2, '0')).join(' ')}]`);
+
+    const changed = applyWrite(device, parsed.code, parsed.data);
+
+    let reply;
+    try { reply = mockReply(device, parsed.code, parsed.data); }
+    catch (e) {
+        console.error(`mockReply threw on ${device.id} for code 0x${parsed.code.toString(16)}:`, e.message);
+        return;
+    }
     if (!reply) return;
-    const frame = buildReplyFrame(reply);
+
+    let frame;
+    try { frame = buildReplyFrame(reply); }
+    catch (e) {
+        console.error(`buildReplyFrame threw on ${device.id}:`, e.message);
+        return;
+    }
+
+    // Log the mock's response (device → host).
+    logFrame('RX', device, frame, `<- mock reply to 0x${parsed.code.toString(16).padStart(2, '0')} (${cmdName(parsed.code)})`);
+
     addMessageLog({
         timestamp: new Date().toISOString(),
         deviceId: device.id,
@@ -383,10 +770,11 @@ function handleMockWrite(device, bytes) {
         payloadHex: bytesToHex(Array.from(frame)),
     });
     setTimeout(() => emitReportFromDevice(device, Array.from(frame)), device.mockResponseDelayMs);
+    return changed;
 }
 
 // ---------------------------------------------------------------------------
-// DeviceSvelte lifecycle
+// Device lifecycle
 // ---------------------------------------------------------------------------
 
 function openHidDevice(hidPath) {
@@ -412,12 +800,12 @@ function openHidDevice(hidPath) {
         slotKey: hidPath,
     });
 
-    // Register BEFORE attaching listeners so re-entrant calls find it.
     devices.set(hidPath, rec);
     openingPaths.delete(hidPath);
 
     handle.on('data', (buf) => {
         const bytes = Array.from(buf);
+        logFrame('HID-RX', rec, bytes, 'from physical device');
         emitReportFromDevice(rec, bytes);
     });
 
@@ -435,14 +823,9 @@ function closeDevice(deviceId) {
     const rec = devices.get(deviceId);
     if (!rec || rec.closing) return;
     rec.closing = true;
-
-    // Remove from map first so re-entrant closeDevice()/openHidDevice()
-    // during handle.close() behave sanely.
     devices.delete(deviceId);
 
-    if (rec.hid) {
-        try { rec.hid.close(); } catch {}
-    }
+    if (rec.hid) { try { rec.hid.close(); } catch {} }
 
     const goneMsg = JSON.stringify({
         type: 'device_gone',
@@ -504,8 +887,6 @@ function removeMockDevice(id) {
 }
 
 function spawnMockDevices() {
-    // Ensure at least MOCK_DEVICE_COUNT mock devices exist, without
-    // duplicating slots on repeated enable:true toggles.
     let existing = 0;
     for (const rec of devices.values()) if (rec.kind === 'mock') existing++;
     for (let i = existing; i < MOCK_DEVICE_COUNT; i++) addMockDevice();
@@ -522,9 +903,6 @@ function removeMockDevices() {
 // ---------------------------------------------------------------------------
 
 function emitReportFromDevice(device, reportBytes) {
-    // Always log for diagnostics, but only push over the wire if someone
-    // is listening. Throttle log volume: only first report per device per
-    // second is logged when there are no subscribers.
     if (device.subscribers.size === 0) {
         const now = Date.now();
         if (!device._lastIdleLogAt || now - device._lastIdleLogAt >= 1000) {
@@ -587,16 +965,21 @@ function sendBytesToDevice(device, bytes) {
         payloadBase64: b64encode(bytes),
     });
 
-    if (device.kind === 'mock') { handleMockWrite(device, bytes); return true; }
-    if (!device.hid) return false;
-    try {
-        device.hid.write(new Uint8Array(bytes));
-        return true;
-    } catch (e) {
-        console.error(`HID ${device.id} write error:`, e.message);
-        closeDevice(device.id);
+    let ok = false;
+    let stateChanged = false;
+
+    if (device.kind === 'mock') {
+        stateChanged = handleMockWrite(device, bytes);   // now returns whether state changed
+        ok = true;
+    } else if (device.hid) {
+        try { device.hid.write(new Uint8Array(bytes)); ok = true; }
+        catch (e) { closeDevice(device.id); return false; }
+    } else {
         return false;
     }
+
+    if (ok && stateChanged) notifySettingsForDevice(device);
+    return ok;
 }
 
 function notifySettingsForDevice(device) {
@@ -614,13 +997,6 @@ function notifySettingsForDevice(device) {
         try { if (ws.readyState === WebSocket.OPEN) ws.send(msg); } catch {}
     }
 }
-
-// ---------------------------------------------------------------------------
-// Settings
-// ---------------------------------------------------------------------------
-// There is intentionally no periodic settings ticker: settings are sent
-// once on subscribe, and would be pushed again on any real change (once
-// the protocol parser populates device.settings from HID reports).
 
 // ---------------------------------------------------------------------------
 // Devices-change SSE
@@ -665,8 +1041,6 @@ const MIME = {
 };
 
 async function serveStatic(res, name) {
-    // Reject path traversal defensively even though current callers pass
-    // hard-coded literals.
     const resolved = join(PUBLIC_DIR, name);
     if (resolved !== PUBLIC_DIR && !resolved.startsWith(PUBLIC_DIR + sep)) {
         res.writeHead(403, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
@@ -699,8 +1073,6 @@ function json(res, code, obj) {
 }
 
 async function getLocalAddress() {
-    // Returns the address we're actually bound to (so a loopback bind
-    // reports 127.0.0.1, not a LAN IP the server isn't listening on).
     if (BIND_HOST !== '0.0.0.0') return BIND_HOST;
     try {
         const os = await import('node:os');
@@ -721,17 +1093,12 @@ async function getLocalAddress() {
 // ---------------------------------------------------------------------------
 
 const httpServer = createServer(async (req, res) => {
-    // --- CORS ---
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     res.setHeader('Access-Control-Max-Age', '86400');
 
-    if (req.method === 'OPTIONS') {
-        res.writeHead(204);
-        res.end();
-        return;
-    }
+    if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
     addConnectionLog({
         timestamp: new Date().toISOString(),
@@ -788,7 +1155,6 @@ const httpServer = createServer(async (req, res) => {
     }
 
     if (path === '/servers') return json(res, 200, { servers: [] });
-
     if (path === '/logs/connections') return json(res, 200, connectionLogs);
     if (path === '/logs/messages')   return json(res, 200, messageLogs);
 
@@ -842,7 +1208,7 @@ const httpServer = createServer(async (req, res) => {
                 if (typeof body.enable === 'boolean') {
                     mockMode = body.enable;
                     process.env.MOCK_MODE = String(mockMode);
-                    if (mockMode) spawnMockDevices();   // ensures at least N, no duplicates
+                    if (mockMode) spawnMockDevices();
                     else removeMockDevices();
                     return json(res, 200, {
                         message: `Mock mode ${mockMode ? 'enabled' : 'disabled'}`,
@@ -892,6 +1258,7 @@ const httpServer = createServer(async (req, res) => {
 const wss = new WebSocketServer({ server: httpServer, maxPayload: MAX_WS_PAYLOAD });
 
 const clientSubscriptions = new WeakMap();
+let nextClientId = 0;
 
 function getSubs(ws) {
     let s = clientSubscriptions.get(ws);
@@ -904,7 +1271,6 @@ function subscribe(ws, deviceId) {
     if (!device) return false;
 
     if (device.subscribers.has(ws)) {
-        // Already subscribed — re-send current state, but don't double-notify.
         sendToClient(ws, {
             type: 'subscribed',
             deviceId: device.id,
@@ -928,8 +1294,7 @@ function subscribe(ws, deviceId) {
         publishedId: device.publishedId,
         product: device.product,
         kind: device.kind,
-        subscriberCount: device ? device.subscribers.size : null,
-
+        subscriberCount: device.subscribers.size,
     });
     sendToClient(ws, {
         type: 'settings_update',
@@ -940,18 +1305,6 @@ function subscribe(ws, deviceId) {
         channels: device.settings.channels,
         routing: device.settings.routing,
     });
-
-    if (device.kind === 'mock') {
-        sendToClient(ws, { type: 'report', deviceId: device.id, deviceGuid: device.deviceGuid,
-            publishedId: device.publishedId,
-            data: b64encode(buildReplyFrame([0x01, 0x00, 0x01, 0x02])) });
-        const v = '4x4MINIPRO V010';
-        const vp = [0x01, 0x00, 1 + v.length, 0x52];
-        for (const c of v) vp.push(c.charCodeAt(0));
-        sendToClient(ws, { type: 'report', deviceId: device.id, deviceGuid: device.deviceGuid,
-            publishedId: device.publishedId,
-            data: b64encode(buildReplyFrame(vp)) });
-    }
 
     notifyDevicesChanged();
     return true;
@@ -967,7 +1320,6 @@ function unsubscribe(ws, deviceId) {
         deviceGuid: device ? device.deviceGuid : null,
         publishedId: device ? device.publishedId : null,
         subscriberCount: device ? device.subscribers.size : null,
-
     });
     notifyDevicesChanged();
     return true;
@@ -978,7 +1330,7 @@ function sendToClient(ws, msg) {
 }
 
 wss.on('connection', (ws, req) => {
-    let clientId = nextClientId++;
+    const clientId = nextClientId++;
     console.log(`Client #${clientId} connected`);
 
     const autoDevice = new URL(req.url, 'http://localhost').searchParams.get('device');
@@ -1068,9 +1420,6 @@ wss.on('connection', (ws, req) => {
 // Startup / shutdown
 // ---------------------------------------------------------------------------
 
-let nextClientId = 0;
-
-
 async function killProcessOnPort(port) {
     const { spawn } = await import('node:child_process');
     return new Promise((resolve) => {
@@ -1085,7 +1434,7 @@ async function killProcessOnPort(port) {
                 resolve(true);
             } else resolve(false);
         });
-        child.on('error', () => resolve(false)); // e.g. lsof missing (Windows)
+        child.on('error', () => resolve(false));
     });
 }
 
@@ -1099,7 +1448,6 @@ function shutdown() {
 
     if (hidScanInterval) { clearInterval(hidScanInterval); hidScanInterval = null; }
     if (saveStateTimer) { clearTimeout(saveStateTimer); saveStateTimer = null; }
-    // Best-effort synchronous state save on shutdown.
     try {
         const { writeFileSync, mkdirSync } = require('node:fs');
         mkdirSync(STATE_DIR, { recursive: true });
@@ -1108,8 +1456,6 @@ function shutdown() {
 
     for (const id of [...devices.keys()]) closeDevice(id);
 
-    // Politely close clients so wss.close() can complete without waiting
-    // on half-open sockets.
     for (const ws of wss.clients) {
         try { ws.close(1001, 'server shutting down'); } catch {}
     }
@@ -1136,6 +1482,7 @@ function startListening() {
         console.log(`Mock mode: ${mockMode ? 'enabled' : 'disabled'} (${MOCK_DEVICE_COUNT} mock devices)`);
         console.log(`Server ID: ${SERVER_ID}`);
         console.log(`State file: ${STATE_FILE}`);
+        console.log(`Verbose frame logs: ${DEBUG_FRAMES ? 'ON' : 'OFF'} (DEBUG_FRAMES=${process.env.DEBUG_FRAMES ?? 'default'})`);
 
         if (mockMode) spawnMockDevices();
         else scanAndSyncHidDevices();

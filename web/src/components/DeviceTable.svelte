@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { deviceManagerSvelte } from "../state/device.manager.svelte.ts";
+  import { deviceManagerSvelte } from "../state/device-manager.svelte.ts";
 </script>
 
 <div class="device-table-container">

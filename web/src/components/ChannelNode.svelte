@@ -1,7 +1,8 @@
 <script lang="ts">
   // One channel as a patch-board node: a compact button when idle, expanding in place
   // into its full settings when selected. Inputs show gate; outputs show EQ + dynamics.
-  import { device } from "../state/device.svelte.ts";
+  import { activeDevice } from "../state/active-device.svelte.ts";
+  const device = $derived(activeDevice());
   import { OUT_BASE } from "../state/device-model.ts";
   import Meter from "./Meter.svelte";
   import ChannelHeader from "./ChannelHeader.svelte";

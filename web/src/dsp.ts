@@ -1,6 +1,11 @@
 // High-level DSP client over any DspTransport. Builds confirmed command frames,
 // sends them, and parses replies ([01,00,N,code,data]). Encodings still being
 // calibrated (PEQ gain dB, crossover Hz) are exposed in raw form via control.ts.
+//
+// When bound to a bridge transport (WebSocketTransport), `deviceId` selects
+// which DSP unit the request is meant for. The transport uses it to filter
+// replies so multiple units on one socket don't collide. For USB transports
+// (WebHidTransport) `deviceId` is undefined and ignored.
 import type { DspTransport } from "./transport/transport.ts";
 import { parseReply, type Reply } from "./protocol/frame.ts";
 import {
@@ -17,7 +22,14 @@ import {
 const ascii = (b: Uint8Array) => new TextDecoder().decode(b).replace(/\0+$/, "").trim();
 
 export class Dsp {
-  constructor(private readonly transport: DspTransport) {}
+  private readonly deviceId?: string;
+
+  constructor(
+      private readonly transport: DspTransport,
+      deviceId?: string,
+  ) {
+    this.deviceId = deviceId;
+  }
 
   /**
    * Wake/handshake: send the status query the device expects first after connect.
@@ -65,8 +77,26 @@ export class Dsp {
   testTone(source: number, freqIndex = 0): Promise<Reply> { return this.send(testToneFrame(source, freqIndex)); }
   setPassword(pw: string): Promise<Reply> { return this.send(setPasswordFrame(pw)); }
 
-  /** Send a pre-built request frame and parse the reply. */
+  /**
+   * Send a pre-built request frame and parse the reply.
+   * `deviceId` (bridge only) selects which unit the request targets, so
+   * replies for other units on the same socket are ignored by the transport.
+   */
   async send(frame: Uint8Array): Promise<Reply> {
-    return parseReply(await this.transport.request(frame));
+    if ((globalThis as any).__dspDebug) {
+      console.log('%c[dsp]', 'color:#a0c4a8', 'send',
+          'deviceId=' + (this.deviceId ?? '-'),
+          'frameLen=' + frame.length,
+          'head=' + Array.from(frame.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' '));
+    }
+    const report = await this.transport.request(frame, undefined, this.deviceId);
+    const reply = parseReply(report);
+    if ((globalThis as any).__dspDebug) {
+      console.log('%c[dsp]', 'color:#a0c4a8', 'reply',
+          'code=0x' + reply.code.toString(16),
+          'dataLen=' + reply.data.length,
+          'checksumOk=' + reply.checksumOk);
+    }
+    return reply;
   }
 }

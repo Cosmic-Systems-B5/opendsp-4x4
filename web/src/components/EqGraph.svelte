@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { device } from "../state/device.svelte.ts";
+  import { activeDevice } from "../state/active-device.svelte.ts";
+  const device = $derived(activeDevice());
   import { DEFAULT_BAND_FREQS } from "../state/device-model.ts";
 
   import { logFreqAxis, summedResponseDb } from "../eq/response.ts";
