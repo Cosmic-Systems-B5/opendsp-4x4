@@ -183,8 +183,6 @@ export class DeviceSvelte {
     }));
     this.routing = [...other.routing];
     this.eqLink = { ...other.eqLink };
-    this.presetName = other.presetName;
-    this.activePreset = other.activePreset;
     this.lastReadback = other.lastReadback;
     this.hasDefaults = other.hasDefaults;
   }
@@ -196,19 +194,13 @@ export class DeviceSvelte {
     dlog('hydrate START');
     const pages: Uint8Array[] = [];
     for (let i = 0; i < 9; i++) {
-      dlog('hydrate: requesting channel', i);
       const data = await this.dsp.channelState(i);
-      dlog('hydrate: got channel', i, 'dataLen=' + data.length,
-          'head=' + Array.from(data.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(' '));
       pages[data[0] ?? i] = data.slice(1, 51);
     }
-    dlog('hydrate: all pages read', 'sizes=' + pages.map(p => p ? p.length : 0).join(','));
 
     const pr = parsePresetImage(reconstructPresetImage(pages));
-    dlog('hydrate: parsed', 'presetName=' + pr.presetName,
-        'inputs=' + pr.inputs.length, 'outputs=' + pr.outputs.length);
     this.lastReadback = pr;
-    this.presetName = pr.presetName;
+    // presetName and activePreset are UI-only; do not copy from hardware.
 
     const newChannels = [...this.channels];
     pr.inputs.forEach((c, i) => {
@@ -256,7 +248,6 @@ export class DeviceSvelte {
 
     this.channels = newChannels;
     this.routing = newRouting;
-    console.log('[device] hydrate complete - channels:', this.channels.map(c => ({ name: c.name, gainDb: c.gainDb })));
   }
 
   // --- debounced commit -------------------------------------------------
@@ -434,7 +425,6 @@ export class DeviceSvelte {
 
   async recallPreset(slot: number): Promise<void> {
     if (this.dsp) {
-      this.activePreset = slot;
       await this.dsp.recallPreset(slot);
       try { await this.hydrate(); } catch { /* ignore */ }
     }
@@ -469,8 +459,6 @@ export class DeviceSvelte {
       const deviceState = {
         channels: this.channels,
         routing: this.routing,
-        presetName: this.presetName,
-        activePreset: this.activePreset,
         eqLink: this.eqLink,
         currentPresetId: this.currentPresetId,
       };
@@ -483,8 +471,8 @@ export class DeviceSvelte {
     try { raw = localStorage.getItem(this.stateKey()); } catch { /* ignore */ }
     if (!raw) return;
     const state = JSON.parse(raw) as {
-      channels: Channel[]; routing: number[]; presetName?: string;
-      activePreset?: number; eqLink?: Record<number, number>;
+      channels: Channel[]; routing: number[];
+      eqLink?: Record<number, number>;
       currentPresetId?: string | null;
     };
     this.channels = state.channels;
@@ -492,10 +480,17 @@ export class DeviceSvelte {
       this.channels = [...this.channels, defaultChannel(this.channels.length)];
     }
     this.routing = state.routing;
-    if (state.presetName !== undefined) this.presetName = state.presetName;
-    if (state.activePreset !== undefined) this.activePreset = state.activePreset;
     if (state.eqLink !== undefined) this.eqLink = state.eqLink;
     if (state.currentPresetId !== undefined) this.currentPresetId = state.currentPresetId;
+    // Restore presetName from the currently-linked preset (UI-only field;
+    // it isn't persisted, but the preset manager can supply it).
+    if (this.currentPresetId) {
+      const idx = presetManager.findPresetIndexById(this.currentPresetId);
+      if (idx >= 0) {
+        const p = presetManager.loadPreset(idx);
+        if (p) this.presetName = p.name;
+      }
+    }
   }
 
   clearDeviceState(): void {
@@ -615,8 +610,9 @@ export class DeviceSvelte {
     if (preset.device.eqLink && typeof preset.device.eqLink === 'object') {
       this.eqLink = { ...preset.device.eqLink };
     }
-    if (typeof preset.device.presetName === 'string') this.presetName = preset.device.presetName;
-    if (typeof preset.device.activePreset === 'number') this.activePreset = preset.device.activePreset;
+
+    // UI-only fields: keep them in sync with the loaded preset.
+    if (typeof preset.name === 'string') this.presetName = preset.name;
     if (typeof preset.id === 'string') this.currentPresetId = preset.id;
 
     // --- Phase 2: PERSISTENCE --------------------------------------------
@@ -662,8 +658,11 @@ export class DeviceSvelte {
         eqMode: ch.eqMode,
       });
     }
-    const savedPreset = presetManager.saveDeviceStateToPreset(name, channels, [...this.routing], this.eqLink, this.activePreset);
-    if (savedPreset) this.currentPresetId = savedPreset.id;
+    const savedPreset = presetManager.saveDeviceStateToPreset(name, channels, [...this.routing], this.eqLink);
+    if (savedPreset) {
+      this.currentPresetId = savedPreset.id;
+      this.presetName = name;
+    }
     this.saveDeviceState();
   }
 
@@ -699,12 +698,13 @@ export class DeviceSvelte {
           channels,
           routing: [...this.routing],
           eqLink: { ...this.eqLink },
-          activePreset: this.activePreset,
-          presetName: this.presetName,
         },
       });
       const savedPreset = presetManager.loadPreset(idx);
-      if (savedPreset) this.currentPresetId = savedPreset.id;
+      if (savedPreset) {
+        this.currentPresetId = savedPreset.id;
+        this.presetName = name;
+      }
       this.saveDeviceState();
     }
   }
@@ -716,11 +716,11 @@ export class DeviceSvelte {
       this.currentPresetId = null;
       return;
     }
+    const preset = presetManager.loadPreset(idx);
+    if (!preset) return;
     try {
-      this.updateExistingPresetToStorage(
-          this.presetName || presetManager.presetName || 'Untitled preset',
-          this.currentPresetId,
-      );
+      // Both args: the preset's display name and its id.
+      this.updateExistingPresetToStorage(preset.name, this.currentPresetId);
     } catch (e) {
       console.warn('[preset] syncCurrentPreset failed:', e);
     }
@@ -732,6 +732,7 @@ export class DeviceSvelte {
     if (idx < 0) return false;
     presetManager.deletePreset(idx);
     this.currentPresetId = null;
+    this.presetName = "";
     return true;
   }
 
@@ -739,7 +740,10 @@ export class DeviceSvelte {
     const idx = presetManager.findPresetIndexById(id);
     if (idx < 0) return false;
     presetManager.deletePreset(idx);
-    if (this.currentPresetId === id) this.currentPresetId = null;
+    if (this.currentPresetId === id) {
+      this.currentPresetId = null;
+      this.presetName = "";
+    }
     return true;
   }
 

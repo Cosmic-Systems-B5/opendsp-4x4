@@ -1,8 +1,6 @@
 Claude Ignore This File
 
-[ ] Web UI: Persistence: Make sure that when refreshing the page the UI reflects the current state of the localStorage. Data model should be updated from the local storage.
-
-[ ] Web UI: Device Connection: Make the connection and reconnection to servers and devices no dependant on being on the system page. Refreshing the page should reconnect regardless of the page you're on.
+[ ] Add a rate limiter to the UI so when adjusting settings the DSPs are more responsive and less data is sent over the wire. Always send the last value when mouse button is released. Don't rate limit the entire device config when connecting new DSPs.
 
 [ ] Web UI: UI Feedback: When initially connecting to a dsp device (either first or any subsequent) and is either sending or receiving a full device config pause the UI and show a progress bar while the config data is transferred, but only when sending the batch initial config, not when using the ui to tweak settings. When tweaking settings only send the changes.
 

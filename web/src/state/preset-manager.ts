@@ -22,9 +22,7 @@ interface DspPreset {
   device: {
     channels: Channel[];
     routing: number[];
-    activePreset: number;
     eqLink: Record<number, number>;
-    presetName: string;
   };
 }
 
@@ -81,10 +79,6 @@ class PresetManager {
     this.loadPresets();
   }
 
-  get presetName(): string { return this._presetName; }
-  set presetName(name: string) { this._presetName = name; }
-  private _presetName = "";
-
   subscribe(callback: () => void): () => void {
     this.listeners.push(callback);
     return () => {
@@ -107,7 +101,6 @@ class PresetManager {
       channels: Channel[],
       routing: number[],
       eqLink: Record<number, number>,
-      activePreset = -1,
       identity?: { serverid?: string; guid?: string },
   ): DspPreset {
     const newPreset: DspPreset = {
@@ -120,9 +113,7 @@ class PresetManager {
       device: {
         channels: channels.map(cloneChannel),
         routing: [...routing],
-        activePreset,
         eqLink: { ...eqLink },
-        presetName: this.presetName || "",
       },
     };
 
@@ -179,11 +170,9 @@ class PresetManager {
       routing: updates.device?.routing
           ? [...updates.device.routing]
           : [...current.device.routing],
-      activePreset: updates.device?.activePreset ?? current.device.activePreset,
       eqLink: updates.device?.eqLink
           ? { ...updates.device.eqLink }
           : { ...current.device.eqLink },
-      presetName: updates.device?.presetName ?? current.device.presetName,
     };
 
     this.presets[idx] = {
@@ -246,9 +235,7 @@ class PresetManager {
       device: {
         channels: device.channels.map(cloneChannel),
         routing: [...device.routing],
-        activePreset: device.activePreset ?? -1,
         eqLink: device.eqLink ?? {},
-        presetName: device.presetName ?? "",
       },
     };
 
@@ -290,9 +277,7 @@ class PresetManager {
           device: {
             channels: device.channels.map(cloneChannel),
             routing: [...device.routing],
-            activePreset: device.activePreset ?? -1,
             eqLink: device.eqLink ?? {},
-            presetName: device.presetName ?? "",
           },
         };
       });
@@ -353,9 +338,7 @@ class PresetManager {
           device: {
             channels: Array.isArray(device?.channels) ? device.channels.map(cloneChannel) : [],
             routing: Array.isArray(device?.routing) ? [...device.routing] : [0x01, 0x02, 0x04, 0x08],
-            activePreset: device?.activePreset ?? -1,
             eqLink: device?.eqLink ?? {},
-            presetName: device?.presetName ?? "",
           },
         };
       });
