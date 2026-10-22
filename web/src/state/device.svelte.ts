@@ -116,6 +116,10 @@ export class DeviceSvelte {
       this._ready = this.restoreDeviceState()
           .catch((e) => console.warn('restoreDeviceState failed:', e))
           .then(() => this.hydrate())
+          .then(() => {
+            // Save the fresh device state to localStorage after hydration
+            this.saveDeviceState();
+          })
           .catch((e) => console.warn('initial hydrate failed:', e));
     });
   }
