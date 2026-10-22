@@ -2,8 +2,8 @@
 // change is debounced + sent through the transport. Engineering-unit params
 // are converted to wire values via the Calibration seam.
 //
-// Works for both USB (HID transport) and remote (WebSocketTransport via
-// bridge.js). When bound via `bind()`, `this.dsp` is a real Dsp instance
+// Works for remote (WebSocketTransport via bridge.js).
+// When bound via `bind()`, `this.dsp` is a real Dsp instance
 // pointed at the shared WebSocketTransport with this device's deviceId, so
 // every write path (setGainDb, peqBand, pushAll, hydrate, meters, presets)
 // uses the same code regardless of transport.
@@ -111,14 +111,15 @@ export class DeviceSvelte {
     dlog('bind: Dsp created', 'deviceId=' + opts.deviceId);
 
     queueMicrotask(() => {
-      // Hydrate device state from hardware on connect
-      // This ensures we have the current state from the device as our source of truth
-      this._ready = this.restoreDeviceState()
-          .catch((e) => console.warn('restoreDeviceState failed:', e))
-          .then(() => this.hydrate())
+      console.log('[device] bind: starting hydration for', opts.deviceId);
+      // Hydrate device state from hardware on connect - this is the source of truth
+      // Save to localStorage after hydration completes
+      this._ready = this.hydrate()
           .then(() => {
+            console.log('[device] bind: hydration complete, saving to localStorage');
             // Save the fresh device state to localStorage after hydration
             this.saveDeviceState();
+            console.log('[device] channels after save:', this.channels.length, 'channels, first channel name:', this.channels[0]?.name);
           })
           .catch((e) => console.warn('initial hydrate failed:', e));
     });
@@ -234,8 +235,11 @@ export class DeviceSvelte {
     });
 
     // Assign back to trigger reactivity
+    dlog('hydrate: assigning new channels (length=' + newChannels.length + ')');
     this.channels = newChannels;
     this.routing = newRouting;
+    console.log('[device] hydrate complete - channels:', this.channels.map(c => ({ name: c.name, gainDb: c.gainDb })));
+    console.log('[device] channels array reference check:', this.channels === newChannels ? 'SAME' : 'DIFFERENT');
   }
 
   // --- debounced commit -------------------------------------------------

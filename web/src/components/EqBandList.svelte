@@ -2,8 +2,7 @@
   // Explicit per-band PEQ controls (freq / gain / Q-bandwidth / type / bypass) —
   // the discoverable counterpart to dragging handles on the graph. Same store
   // commit path, so the graph and these stay in sync.
-  import { activeDevice } from "../state/active-device.svelte.ts";
-  const device = $derived(activeDevice());
+  import { device } from "../state/device.svelte.ts";
   import { DEFAULT_BAND_FREQS } from "../state/device-model.ts";
 
   import CrossoverBands from "./CrossoverBands.svelte";

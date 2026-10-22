@@ -2,8 +2,7 @@
   // The patch board: inputs (left) and outputs (right) as expand-in-place nodes, with
   // patch-cable wires between them, and the routing grid below. The active side's column
   // grows; the idle side stays a compact strip whose buttons spread to span the height.
-  import { activeDevice } from "../state/active-device.svelte.ts";
-  const device = $derived(activeDevice());
+  import { device } from "../state/device.svelte.ts";
   import { OUT_BASE } from "../state/device-model.ts";
   import ChannelNode from "./ChannelNode.svelte";
   import RoutingMatrix from "./RoutingMatrix.svelte";

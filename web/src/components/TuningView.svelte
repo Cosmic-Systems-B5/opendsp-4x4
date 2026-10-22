@@ -1,15 +1,14 @@
 <script lang="ts">
   // Tuning view: shows Out 1-3 with gain, EQ, LPF, HPF, and Delay sections always visible
-  import { activeDevice } from "../state/active-device.svelte.ts";
-  const device = $derived(activeDevice());
+  import { device } from "../state/device.svelte.ts";
   import { OUT_BASE } from "../state/device-model.ts";
   import OutputTuning from "./OutputTuning.svelte";
 
   // Show outputs 1, 2, 3 (indices 4, 5, 6)
   const OUT_indices = [OUT_BASE + 0, OUT_BASE + 1, OUT_BASE + 2];
 
-  // Create allEqs array reactively - this will update when any channel changes
-  let allEqs = $state(
+  // Create allEqs array reactively - $derived ensures updates when channels change
+  let allEqs = $derived(
     OUT_indices.map(i => ({ ch: device.ch(i), color: `var(--ch-${i})` }))
   );
 </script>

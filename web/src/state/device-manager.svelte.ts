@@ -112,11 +112,17 @@ class DeviceManagerState {
 
     this.#recordBinding(rec);
 
-    // Send current local data model config to any newly connected device.
-    // This ensures the new device gets the full, up-to-date configuration.
-    void this.sendFullConfigToDevice(deviceStore).catch((e) =>
-        console.warn(`[deviceManager] sendFullConfigToDevice failed for ${rec.id}:`, e)
-    );
+    // Determine if this is the first device connection or a subsequent one.
+    // If localStorage has saved state, send it to new devices (they should match).
+    // If no localStorage, the device will hydrate from hardware.
+    const hasStoredState = this.#hasDeviceStateInLocalStorage();
+
+    if (hasStoredState) {
+      // Send current local data model config to any newly connected device
+      void this.sendFullConfigToDevice(deviceStore).catch((e) =>
+          console.warn(`[deviceManager] sendFullConfigToDevice failed for ${rec.id}:`, e)
+      );
+    }
 
     return rec;
   }
@@ -172,10 +178,9 @@ class DeviceManagerState {
       connected: true,
     }];
 
-    // Send current local data model config to any newly connected USB device.
-    void this.sendFullConfigToDevice(deviceStore).catch((e) =>
-        console.warn(`[deviceManager] sendFullConfigToDevice failed for ${transportType} device:`, e)
-    );
+    // USB devices always hydrate from hardware first; they don't receive
+    // config from other devices (no master/slave in peer-to-peer).
+    // The UI will read the state after hydration completes.
 
     this.saveConnectionState();
   }
@@ -493,6 +498,15 @@ class DeviceManagerState {
   clearConnectionState(): void {
     try { localStorage.removeItem("opendsp-device-manager-state"); }
     catch (e) { console.error('Error clearing device manager state:', e); }
+  }
+
+  // Check if there's saved device state in localStorage from a previous connection
+  #hasDeviceStateInLocalStorage(): boolean {
+    try {
+      const raw = localStorage.getItem("opendsp-device-state");
+      return !!raw && raw.length > 0;
+    } catch { /* ignore */ }
+    return false;
   }
 }
 

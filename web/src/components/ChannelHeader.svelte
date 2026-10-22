@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { activeDevice } from "../state/active-device.svelte.ts";
-  const device = $derived(activeDevice());
+  import { device } from "../state/device.svelte.ts";
   import Meter from "./Meter.svelte";
   let { index }: { index: number; } = $props();
   const ch = $derived(device.ch(index));
