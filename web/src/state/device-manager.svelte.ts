@@ -20,6 +20,8 @@ export interface ConnectedDevice {
   serverid?: string;
   guid?: string;
   connected: boolean;
+  // Sync tracking: count of pending operations
+  pendingOps: number;
 }
 
 export interface ServerConnection {
@@ -88,6 +90,7 @@ class DeviceManagerState {
       serverid: opts.serverid,
       guid: opts.guid,
       connected: true,
+      pendingOps: 0,
     };
     this.devices = [...this.devices, rec];
 
@@ -152,6 +155,7 @@ class DeviceManagerState {
     const rec = this.devices.find(d => d.id === id);
     if (!rec) return;
     rec.connected = false;
+    rec.pendingOps = 0; // Reset pending ops on disconnect
     this.#dropBinding(rec);
     this.devices = [...this.devices];
     this.saveConnectionState();
@@ -172,7 +176,97 @@ class DeviceManagerState {
 
   // --- send full config to device ----------------------------------------
 
+  async #sendFullConfigToDeviceWithSync(device: ConnectedDevice): Promise<void> {
+    if (!device.store.dsp) {
+      console.log('[dm] sendFullConfigToDevice skipped — no dsp');
+      return;
+    }
+    await device.store.ready;
+
+    // Copy the canonical UI model into the shadow store first, so the values
+    // we push are the UI's, not whatever the shadow hydrated from hardware.
+    device.store.channels = defaultDevice.channels.map(ch => ({
+      ...ch,
+      eq: ch.eq ? {
+        bands: ch.eq.bands.map(b => ({ ...b })),
+        hpf: { ...ch.eq.hpf },
+        lpf: { ...ch.eq.lpf },
+      } : undefined,
+      comp: ch.comp ? { ...ch.comp } : undefined,
+      gate: ch.gate ? { ...ch.gate } : undefined,
+    }));
+    device.store.routing = [...defaultDevice.routing];
+    device.store.eqLink = { ...defaultDevice.eqLink };
+
+    console.log('[dm] sendFullConfigToDevice', {
+      serverid: device.store.serverid,
+      guid: device.store.guid,
+      channels: device.store.channels.length,
+    });
+
+    // Track all pending ops for full config sync
+    const channelCount = device.store.channels.length;
+    device.pendingOps = channelCount * 2; // Estimate: each channel needs multiple ops
+
+    try {
+      for (let i = 0; i < device.store.channels.length; i++) {
+        const ch = device.store.channels[i];
+        if (!ch) continue;
+        try {
+          await device.store.dsp.setLevelDb(i, ch.gainDb);
+          await device.store.dsp.setPolarity(i, ch.polarity);
+          await device.store.dsp.mute(i, ch.mute);
+
+          if (ch.isOutput) {
+            if (ch.delayMs !== undefined) await device.store.dsp.delayMs(i, ch.delayMs);
+            if (ch.comp) await device.store.dsp.compressor(i, ch.comp);
+            await device.store.dsp.routing(i, device.store.routing[i - OUT_BASE] ?? 0);
+            if (ch.eq) {
+              await device.store.dsp.crossoverHpf(i, device.store.calibration.xoverHzToRaw(ch.eq.hpf.freqHz), ch.eq.hpf.slope);
+              await device.store.dsp.crossoverLpf(i, device.store.calibration.xoverHzToRaw(ch.eq.lpf.freqHz), ch.eq.lpf.slope);
+              for (let band = 0; band < ch.eq.bands.length; band++) {
+                const b = ch.eq.bands[band];
+                if (!b) continue;
+                await device.store.dsp.peqBand(i, band, {
+                  freqHz: b.freqHz,
+                  q: device.store.calibration.bwOctToQ(b.bwOct, b.freqHz),
+                  gainRaw: device.store.calibration.peqGainDbToRaw(b.gainDb, b.type),
+                  type: b.type,
+                  bypass: b.bypass,
+                });
+              }
+            }
+          } else if (ch.gate) {
+            await device.store.dsp.gate(i, ch.gate);
+          }
+        } catch (e) {
+          console.warn(`[dm] Failed to push channel ${i} config:`, e);
+        }
+      }
+    } finally {
+      // Reset pending ops after full sync completes
+      device.pendingOps = 0;
+    }
+
+    console.log('[dm] sendFullConfigToDevice done');
+  }
+
   async sendFullConfigToDevice(deviceStore: typeof defaultDevice): Promise<void> {
+    if (!deviceStore.dsp) {
+      console.log('[dm] sendFullConfigToDevice skipped — no dsp');
+      return;
+    }
+
+    // Find the ConnectedDevice record
+    const device = this.devices.find(d => d.store === deviceStore);
+    if (device) {
+      await this.#sendFullConfigToDeviceWithSync(device);
+    } else {
+      await this.sendFullConfigToDeviceWithoutSync(deviceStore);
+    }
+  }
+
+  async sendFullConfigToDeviceWithoutSync(deviceStore: typeof defaultDevice): Promise<void> {
     if (!deviceStore.dsp) {
       console.log('[dm] sendFullConfigToDevice skipped — no dsp');
       return;
@@ -254,11 +348,43 @@ class DeviceManagerState {
       }));
       device.store.routing = [...model.routing];
       device.store.eqLink = { ...model.eqLink };
-      await this.sendFullConfigToDevice(device.store).catch(() => {});
+
+      // Find the ConnectedDevice record for sync tracking
+      const connectedDev = this.devices.find(d => d.guid === device.guid && d.connected);
+      if (connectedDev) {
+        await this.#sendFullConfigToDeviceWithSync(connectedDev).catch(() => {});
+      } else {
+        await this.sendFullConfigToDeviceWithoutSync(device.store).catch(() => {});
+      }
+    }
+  }
+
+  // --- sync tracking helpers ---------------------------------------------
+
+  incPending(device: ConnectedDevice): void {
+    device.pendingOps = Math.max(0, (device.pendingOps || 0) + 1);
+  }
+
+  decPending(device: ConnectedDevice): void {
+    if (device.pendingOps > 0) {
+      device.pendingOps--;
     }
   }
 
   // --- live broadcast (state mirror + per-field hardware push) -----------
+
+  async #broadcastWithSync<T>(
+    fn: () => Promise<T>,
+    device: ConnectedDevice
+  ): Promise<void> {
+    this.incPending(device);
+    try {
+      await fn();
+    } catch { /* per-field best-effort */ }
+    finally {
+      this.decPending(device);
+    }
+  }
 
   broadcastChannelUpdate(channelIndex: number, updates: Partial<Channel>): void {
     if (this.connectedDevices.length === 0) return;
@@ -272,16 +398,14 @@ class DeviceManagerState {
 
       const dsp = device.store.dsp;
       if (!dsp) continue;
-      (async () => {
-        try {
-          if (typeof updates.gainDb === 'number') await dsp.setLevelDb(channelIndex, updates.gainDb);
-          if (typeof updates.mute === 'boolean') await dsp.mute(channelIndex, updates.mute);
-          if (typeof updates.polarity === 'boolean') await dsp.setPolarity(channelIndex, updates.polarity);
-          if (typeof updates.delayMs === 'number') await dsp.delayMs(channelIndex, updates.delayMs);
-          if (updates.comp) await dsp.compressor(channelIndex, updates.comp);
-          if (updates.gate) await dsp.gate(channelIndex, updates.gate);
-        } catch { /* per-field best-effort */ }
-      })();
+      void this.#broadcastWithSync(async () => {
+        if (typeof updates.gainDb === 'number') await dsp.setLevelDb(channelIndex, updates.gainDb);
+        if (typeof updates.mute === 'boolean') await dsp.mute(channelIndex, updates.mute);
+        if (typeof updates.polarity === 'boolean') await dsp.setPolarity(channelIndex, updates.polarity);
+        if (typeof updates.delayMs === 'number') await dsp.delayMs(channelIndex, updates.delayMs);
+        if (updates.comp) await dsp.compressor(channelIndex, updates.comp);
+        if (updates.gate) await dsp.gate(channelIndex, updates.gate);
+      }, device);
     }
   }
 
@@ -297,7 +421,10 @@ class DeviceManagerState {
 
       const dsp = device.store.dsp;
       if (!dsp) continue;
-      void dsp.routing(outIndex, mask).catch(() => {});
+      void this.#broadcastWithSync(
+        () => dsp.routing(outIndex, mask),
+        device
+      );
     }
   }
 
@@ -325,13 +452,15 @@ class DeviceManagerState {
       const b = eq.bands[bandIndex]!;
       const cal = device.store.calibration;
       if (!cal) continue;
-      void dsp.peqBand(channelIndex, bandIndex, {
-        freqHz: b.freqHz,
-        q: cal.bwOctToQ(b.bwOct, b.freqHz),
-        gainRaw: cal.peqGainDbToRaw(b.gainDb, b.type),
-        type: b.type,
-        bypass: b.bypass,
-      }).catch(() => {});
+      void this.#broadcastWithSync(async () => {
+        await dsp.peqBand(channelIndex, bandIndex, {
+          freqHz: b.freqHz,
+          q: cal.bwOctToQ(b.bwOct, b.freqHz),
+          gainRaw: cal.peqGainDbToRaw(b.gainDb, b.type),
+          type: b.type,
+          bypass: b.bypass,
+        });
+      }, device);
     }
   }
 
@@ -349,11 +478,12 @@ class DeviceManagerState {
       const cal = device.store.calibration;
       if (!dsp || !cal) continue;
       const x = (eq as any)[type];
-      if (type === 'hpf') {
-        void dsp.crossoverHpf(channelIndex, cal.xoverHzToRaw(x.freqHz), x.slope).catch(() => {});
-      } else {
-        void dsp.crossoverLpf(channelIndex, cal.xoverHzToRaw(x.freqHz), x.slope).catch(() => {});
-      }
+      void this.#broadcastWithSync(
+        type === 'hpf'
+          ? () => dsp.crossoverHpf(channelIndex, cal.xoverHzToRaw(x.freqHz), x.slope)
+          : () => dsp.crossoverLpf(channelIndex, cal.xoverHzToRaw(x.freqHz), x.slope),
+        device
+      );
     }
   }
 
