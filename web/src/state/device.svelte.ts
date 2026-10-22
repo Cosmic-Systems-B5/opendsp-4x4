@@ -118,10 +118,17 @@ export class DeviceSvelte {
           .then(() => {
             console.log('[device] bind: hydration complete, saving to localStorage');
             // Save the fresh device state to localStorage after hydration
-            this.saveDeviceState();
-            console.log('[device] channels after save:', this.channels.length, 'channels, first channel name:', this.channels[0]?.name);
+            try {
+              this.saveDeviceState();
+              console.log('[device] channels after save:', this.channels.length, 'channels, first channel name:', this.channels[0]?.name);
+            } catch (e) {
+              console.error('saveDeviceState failed:', e);
+            }
           })
-          .catch((e) => console.warn('initial hydrate failed:', e));
+          .catch((e) => {
+            console.error('initial hydrate failed:', e);
+            throw e;
+          });
     });
   }
 
