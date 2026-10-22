@@ -1,5 +1,5 @@
 <script lang="ts">
-  import {device} from "../state/device.svelte.ts";
+  import { device } from "../state/device.svelte.ts";
   import presetManager from "../state/preset-manager.ts";
 
   // Preset name input for saving

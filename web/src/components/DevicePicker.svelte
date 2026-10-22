@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { serverManager } from "../state/server-manager.svelte.ts";
   import { deviceManager } from "../state/device-manager.svelte.ts";
-  import { DeviceSvelte } from "../state/device.svelte.ts";
+  import { device } from "../state/device.svelte.ts";
 
   let urls = $derived(serverManager.urls);
   let servers = $derived(serverManager.servers);
@@ -15,8 +15,7 @@
 
   function boundDevice(url: string, deviceId: string) {
     return devices.find(d =>
-            d.transportType === 'websocket'
-            && d.connectionInfo.url === url
+            d.connectionInfo.url === url
             && d.deviceId === deviceId
             && d.connected,
     );
@@ -41,7 +40,7 @@
     const t = serverManager.getTransport(url);
     if (!t) { console.error('no transport for', url); return; }
 
-    const store = new DeviceSvelte();
+    const store = device;
 
     await store.bind(t, {
       deviceId: info.id,
@@ -197,7 +196,6 @@
                     <span class="badge mono">{info.deviceGuid}</span>
 
                     {#if bound}
-                      <span class="role pill {bound.role}">{bound.role}</span>
                       <button class="btn danger"
                               onclick={() => disconnectDevice(url, info.id)}>Disconnect</button>
                     {:else}

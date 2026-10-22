@@ -5,14 +5,14 @@
 // use `device-manager.svelte.ts` (with extension) in Svelte 5 + Vite unless
 // the Svelte plugin config accepts `.svelte.ts` extensions.
 
-import { device as defaultDevice } from "./device.svelte.ts";
+import { device as defaultDevice } from "../state/device.svelte.ts";
+
 import type { Channel } from "./device-model.ts";
 import type { WebSocketTransport } from "../transport/websocket.ts";
 
 export interface ConnectedDevice {
   id: string;
   store: typeof defaultDevice;
-  transportType: 'usb' | 'websocket';
   transport?: WebSocketTransport;
   connectionInfo: {
     url?: string;
@@ -30,7 +30,6 @@ export interface ConnectedDevice {
 export interface ServerConnection {
   id: string;
   url: string;
-  transportType: 'websocket';
   productName: string;
   connectedAt: string;
   serverGuid?: string;
@@ -85,8 +84,7 @@ class DeviceManagerState {
       },
   ): ConnectedDevice | null {
     const existing = this.devices.find(
-        d => d.transportType === 'websocket'
-            && d.connectionInfo.url === opts.url
+        d => d.connectionInfo.url === opts.url
             && d.deviceId === opts.deviceId
             && d.connected,
     );
@@ -95,7 +93,6 @@ class DeviceManagerState {
     const rec: ConnectedDevice = {
       id: `websocket-${this.nextId++}`,
       store: deviceStore,
-      transportType: 'websocket',
       transport: t,
       connectionInfo: { url: opts.url, productName: opts.productName },
       serverGuid: opts.serverGuid,
@@ -110,19 +107,14 @@ class DeviceManagerState {
     deviceStore.deviceGuid = opts.deviceGuid;
     deviceStore.productName = opts.productName;
 
-    this.#recordBinding(rec);
-
-    // Determine if this is the first device connection or a subsequent one.
-    // If localStorage has saved state, send it to new devices (they should match).
-    // If no localStorage, the device will hydrate from hardware.
-    const hasStoredState = this.#hasDeviceStateInLocalStorage();
-
-    if (hasStoredState) {
+    if (this.devices.length >= 2) {
       // Send current local data model config to any newly connected device
       void this.sendFullConfigToDevice(deviceStore).catch((e) =>
           console.warn(`[deviceManager] sendFullConfigToDevice failed for ${rec.id}:`, e)
       );
     }
+
+    this.#recordBinding(rec);
 
     return rec;
   }
@@ -131,7 +123,7 @@ class DeviceManagerState {
     for (const existing of this.servers) if (existing.url === url) return null;
     const server: ServerConnection = {
       id: `server-${this.nextId++}`,
-      url, transportType: 'websocket', productName, serverGuid,
+      url, productName, serverGuid,
       connectedAt: new Date().toISOString(),
     };
     this.servers.push(server);
@@ -151,39 +143,37 @@ class DeviceManagerState {
     this.#dropBindingsForServer(url);
   }
 
-  getServers(): ServerConnection[] { return [...this.servers]; }
-
-  /** Legacy USB path — no deviceId-aware binding needed. */
-  connect(
-      deviceStore: typeof defaultDevice,
-      connectionInfo: ConnectedDevice['connectionInfo'],
-      transportType: 'usb' | 'websocket',
-      serverGuid?: string,
-      deviceGuid?: string,
-  ): void {
-    const duplicate = this.devices.some(d =>
-        d.transportType === transportType
-        && d.connectionInfo.path === connectionInfo.path
-        && d.connectionInfo.url === connectionInfo.url
-        && d.connected);
-    if (duplicate) return;
-
-    this.devices = [...this.devices, {
-      id: `${transportType}-${this.nextId++}`,
-      store: deviceStore,
-      transportType,
-      connectionInfo,
-      serverGuid,
-      deviceGuid,
-      connected: true,
-    }];
-
-    // USB devices always hydrate from hardware first; they don't receive
-    // config from other devices (no master/slave in peer-to-peer).
-    // The UI will read the state after hydration completes.
-
-    this.saveConnectionState();
-  }
+  // getServers(): ServerConnection[] { return [...this.servers]; }
+  //
+  // /** Legacy USB path — no deviceId-aware binding needed. */
+  // connect(
+  //     deviceStore: typeof defaultDevice,
+  //     connectionInfo: ConnectedDevice['connectionInfo'],
+  //     transportType: 'usb' | 'websocket',
+  //     serverGuid?: string,
+  //     deviceGuid?: string,
+  // ): void {
+  //   const duplicate = this.devices.some(d =>
+  //       d.connectionInfo.path === connectionInfo.path
+  //       && d.connectionInfo.url === connectionInfo.url
+  //       && d.connected);
+  //   if (duplicate) return;
+  //
+  //   this.devices = [...this.devices, {
+  //     id: `${transportType}-${this.nextId++}`,
+  //     store: deviceStore,
+  //     connectionInfo,
+  //     serverGuid,
+  //     deviceGuid,
+  //     connected: true,
+  //   }];
+  //
+  //   // USB devices always hydrate from hardware first; they don't receive
+  //   // config from other devices (no master/slave in peer-to-peer).
+  //   // The UI will read the state after hydration completes.
+  //
+  //   this.saveConnectionState();
+  // }
 
   disconnect(id: string): void {
     const rec = this.devices.find(d => d.id === id);
@@ -425,7 +415,6 @@ class DeviceManagerState {
   }
 
   #recordBinding(rec: ConnectedDevice): void {
-    if (rec.transportType !== "websocket") return;
     const url = rec.connectionInfo.url;
     const deviceId = rec.deviceId;
     if (!url || !deviceId) return;
@@ -442,7 +431,6 @@ class DeviceManagerState {
   }
 
   #dropBinding(rec: ConnectedDevice): void {
-    if (rec.transportType !== "websocket") return;
     const url = rec.connectionInfo.url;
     const deviceId = rec.deviceId;
     if (!url || !deviceId) return;
@@ -468,7 +456,7 @@ class DeviceManagerState {
     try {
       const state = {
         devices: this.devices.map(d => ({
-          id: d.id, transportType: d.transportType,
+          id: d.id,
           connectionInfo: d.connectionInfo, serverGuid: d.serverGuid,
           deviceGuid: d.deviceGuid, connected: d.connected,
         })),
@@ -500,11 +488,15 @@ class DeviceManagerState {
     catch (e) { console.error('Error clearing device manager state:', e); }
   }
 
-  // Check if there's saved device state in localStorage from a previous connection
-  #hasDeviceStateInLocalStorage(): boolean {
+  #hasBoundDevice(): boolean {
     try {
-      const raw = localStorage.getItem("opendsp-device-state");
-      return !!raw && raw.length > 0;
+      const raw = localStorage.getItem("opendsp-bound-devices");
+      if (raw) {
+        var boundDevices = JSON.parse(raw);
+        return !!raw && raw.length > 5;
+      } else {
+        return false;
+      }
     } catch { /* ignore */ }
     return false;
   }
