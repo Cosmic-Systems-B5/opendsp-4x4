@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { deviceManagerSvelte } from "../state/device-manager.svelte.ts";
+  import { deviceManager } from "../state/device-manager.svelte.ts";
+  let devices = $derived(deviceManager.devices);
 </script>
 
 <div class="device-table-container">
@@ -7,7 +8,6 @@
     <thead>
       <tr>
         <th style="width: 60px;">Status</th>
-        <th>Role</th>
         <th>Product Name</th>
         <th>Type</th>
         <th>ID</th>
@@ -15,31 +15,21 @@
       </tr>
     </thead>
     <tbody>
-      {#if deviceManagerSvelte.devices.length === 0}
+      {#if devices.length === 0}
         <tr class="empty-row">
-          <td colspan="6">No DSPs connected. Use System > Connection to add devices.</td>
+          <td colspan="5">No DSPs connected. Use System > Connection to add devices.</td>
         </tr>
       {:else}
-        {#each deviceManagerSvelte.devices as dev (dev.id)}
-          <tr class:master={dev.role === 'master'} class:slave={dev.role === 'slave'}>
+        {#each devices as dev (dev.id)}
+          <tr>
             <td class="status-cell">
               <span class="dot ok"></span>
-            </td>
-            <td>
-              <span class="role-badge" class:role-master={dev.role === 'master'} class:role-slave={dev.role === 'slave'}>
-                {#if dev.role === 'master'}M{:else}S{/if}
-              </span>
-              {#if dev.role === 'master'}<span class="role-label">Master</span>{/if}
             </td>
             <td class="product">{dev.connectionInfo.productName}</td>
             <td class="type">{dev.transportType.toUpperCase()}</td>
             <td class="id">{dev.id.slice(0, 12)}...</td>
             <td class="action">
-              {#if dev.role !== 'master'}
-                <button class="btn-link" onclick={() => deviceManagerSvelte.disconnect(dev.id)}>Disconnect</button>
-              {:else}
-                <span class="muted">Master</span>
-              {/if}
+              <button class="btn-link" onclick={() => deviceManager.disconnect(dev.id)}>Disconnect</button>
             </td>
           </tr>
         {/each}
@@ -48,9 +38,7 @@
   </table>
 
   <div class="summary">
-    <span>Total: {deviceManagerSvelte.devices.length}</span>
-    <span>Master: {#if deviceManagerSvelte.master}<strong>{deviceManagerSvelte.master.productName}</strong>{:else}-{/if}</span>
-    <span>Slaves: {deviceManagerSvelte.slaveCount}</span>
+    <span>Total: {devices.length}</span>
   </div>
 </div>
 
@@ -64,19 +52,9 @@
 
   .empty-row td { color: var(--text-dim); font-style: italic; text-align: center; padding: 1.5rem !important; }
 
-  .master { background: rgba(0, 255, 0, 0.08); }
-  .slave { background: rgba(0, 0, 255, 0.06); }
-
   .status-cell { text-align: center; }
   .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block;
          background: var(--good); box-shadow: 0 0 6px var(--good); }
-
-  .role-badge { display: inline-flex; align-items: center; justify-content: center;
-                width: 24px; height: 24px; border-radius: 4px; font-size: .75rem; font-weight: 600; }
-  .role-master { background: #d0f0d0; color: #1a5c1a; }
-  .role-slave { background: #d0d8f0; color: #1a235c; }
-
-  .role-label { margin-left: 6px; font-size: .7rem; color: var(--text-dim); }
 
   .product { font-weight: 500; color: var(--text); }
   .type { text-transform: uppercase; font-family: monospace; color: var(--text-dim); font-size: .78rem; }
