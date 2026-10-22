@@ -69,7 +69,7 @@
     <span class="placeholder">Ready</span>
   {/if}
 
-  {/* DSP Sync Status Badges */}
+  <!-- DSP Sync Status Badges -->
   {#if deviceManager.connectedDevices.length > 0}
     <div class="device-sync-container">
       {#each deviceManager.connectedDevices as device (device.guid)}
