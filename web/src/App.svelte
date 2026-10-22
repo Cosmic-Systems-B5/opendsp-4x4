@@ -1,5 +1,4 @@
 <script lang="ts">
-  // import { device, deviceManagerSvelte } from "./state/device.svelte.ts";
   import PatchBoard from "./components/PatchBoard.svelte";
   import TuningView from "./components/TuningView.svelte";
   import SystemView from "./components/SystemView.svelte";
