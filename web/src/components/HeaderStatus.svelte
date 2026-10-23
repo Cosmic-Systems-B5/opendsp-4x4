@@ -38,12 +38,27 @@
     message = '';
   }
 
-  // Get initial pending ops value for a device (based on channel count)
+  // Get initial pending ops value for a device
   // This is set when #sendFullConfigToDeviceWithSync starts
   function getInitialPendingOps(device: typeof deviceManager.devices[0]): number {
-    if (!device.store.channels) return 16; // Default 8 channels * 2 ops each
-    const channelCount = device.store.channels.length;
-    return channelCount * 2;
+    if (!device.store.channels) return 32; // Default estimate (8 channels * ~4 msgs)
+    const inputChannels = 4;
+    const outputChannels = 4;
+    const peqBands = 7;
+
+    let count = device.store.channels.length * 3; // gain, polarity, mute per channel
+
+    for (let i = inputChannels; i < device.store.channels.length; i++) {
+      const ch = device.store.channels[i];
+      if (!ch) continue;
+      if (ch.delayMs !== undefined) count++;
+      if (ch.comp) count++;
+      count++; // routing
+      if (ch.eq) {
+        count += 2 + peqBands; // hpf, lpf, and 7 peq bands
+      }
+    }
+    return count;
   }
 
   // Calculate sync progress (0-100) based on pending operations

@@ -174,6 +174,14 @@ class DeviceManagerState {
     this.devices = [...this.devices];
   }
 
+  // --- sync tracking helpers ---------------------------------------------
+
+  decPending(device: ConnectedDevice): void {
+    if (device.pendingOps > 0) {
+      device.pendingOps--;
+    }
+  }
+
   // --- send full config to device ----------------------------------------
 
   async #sendFullConfigToDeviceWithSync(device: ConnectedDevice): Promise<void> {
@@ -204,9 +212,33 @@ class DeviceManagerState {
       channels: device.store.channels.length,
     });
 
-    // Track all pending ops for full config sync
-    const channelCount = device.store.channels.length;
-    device.pendingOps = channelCount * 2; // Estimate: each channel needs multiple ops
+    // Count exact number of messages to send for full config sync
+    let messageCount = 0;
+    const inputChannels = 4;  // channels 0-3 are inputs
+    const outputChannels = 4; // channels 4-7 are outputs
+    const peqBands = 7;
+
+    // Each channel gets: gain, polarity, mute (3 messages)
+    messageCount += device.store.channels.length * 3;
+
+    // Output channels get additional messages
+    for (let i = inputChannels; i < device.store.channels.length; i++) {
+      const ch = device.store.channels[i];
+      if (!ch) continue;
+
+      // delayMs (if set)
+      if (ch.delayMs !== undefined) messageCount++;
+      // compressor (if set)
+      if (ch.comp) messageCount++;
+      // routing
+      messageCount++;
+      // eq (if set): hpf, lpf, and 7 peq bands
+      if (ch.eq) {
+        messageCount += 1 + 1 + peqBands;
+      }
+    }
+
+    device.pendingOps = messageCount;
 
     try {
       for (let i = 0; i < device.store.channels.length; i++) {
@@ -214,16 +246,28 @@ class DeviceManagerState {
         if (!ch) continue;
         try {
           await device.store.dsp.setLevelDb(i, ch.gainDb);
+          this.decPending(device);
           await device.store.dsp.setPolarity(i, ch.polarity);
+          this.decPending(device);
           await device.store.dsp.mute(i, ch.mute);
+          this.decPending(device);
 
           if (ch.isOutput) {
-            if (ch.delayMs !== undefined) await device.store.dsp.delayMs(i, ch.delayMs);
-            if (ch.comp) await device.store.dsp.compressor(i, ch.comp);
+            if (ch.delayMs !== undefined) {
+              await device.store.dsp.delayMs(i, ch.delayMs);
+              this.decPending(device);
+            }
+            if (ch.comp) {
+              await device.store.dsp.compressor(i, ch.comp);
+              this.decPending(device);
+            }
             await device.store.dsp.routing(i, device.store.routing[i - OUT_BASE] ?? 0);
+            this.decPending(device);
             if (ch.eq) {
               await device.store.dsp.crossoverHpf(i, device.store.calibration.xoverHzToRaw(ch.eq.hpf.freqHz), ch.eq.hpf.slope);
+              this.decPending(device);
               await device.store.dsp.crossoverLpf(i, device.store.calibration.xoverHzToRaw(ch.eq.lpf.freqHz), ch.eq.lpf.slope);
+              this.decPending(device);
               for (let band = 0; band < ch.eq.bands.length; band++) {
                 const b = ch.eq.bands[band];
                 if (!b) continue;
@@ -234,10 +278,12 @@ class DeviceManagerState {
                   type: b.type,
                   bypass: b.bypass,
                 });
+                this.decPending(device);
               }
             }
           } else if (ch.gate) {
             await device.store.dsp.gate(i, ch.gate);
+            this.decPending(device);
           }
         } catch (e) {
           console.warn(`[dm] Failed to push channel ${i} config:`, e);
@@ -359,32 +405,7 @@ class DeviceManagerState {
     }
   }
 
-  // --- sync tracking helpers ---------------------------------------------
-
-  incPending(device: ConnectedDevice): void {
-    device.pendingOps = Math.max(0, (device.pendingOps || 0) + 1);
-  }
-
-  decPending(device: ConnectedDevice): void {
-    if (device.pendingOps > 0) {
-      device.pendingOps--;
-    }
-  }
-
   // --- live broadcast (state mirror + per-field hardware push) -----------
-
-  async #broadcastWithSync<T>(
-    fn: () => Promise<T>,
-    device: ConnectedDevice
-  ): Promise<void> {
-    this.incPending(device);
-    try {
-      await fn();
-    } catch { /* per-field best-effort */ }
-    finally {
-      this.decPending(device);
-    }
-  }
 
   broadcastChannelUpdate(channelIndex: number, updates: Partial<Channel>): void {
     if (this.connectedDevices.length === 0) return;
@@ -398,14 +419,16 @@ class DeviceManagerState {
 
       const dsp = device.store.dsp;
       if (!dsp) continue;
-      void this.#broadcastWithSync(async () => {
-        if (typeof updates.gainDb === 'number') await dsp.setLevelDb(channelIndex, updates.gainDb);
-        if (typeof updates.mute === 'boolean') await dsp.mute(channelIndex, updates.mute);
-        if (typeof updates.polarity === 'boolean') await dsp.setPolarity(channelIndex, updates.polarity);
-        if (typeof updates.delayMs === 'number') await dsp.delayMs(channelIndex, updates.delayMs);
-        if (updates.comp) await dsp.compressor(channelIndex, updates.comp);
-        if (updates.gate) await dsp.gate(channelIndex, updates.gate);
-      }, device);
+      (async () => {
+        try {
+          if (typeof updates.gainDb === 'number') await dsp.setLevelDb(channelIndex, updates.gainDb);
+          if (typeof updates.mute === 'boolean') await dsp.mute(channelIndex, updates.mute);
+          if (typeof updates.polarity === 'boolean') await dsp.setPolarity(channelIndex, updates.polarity);
+          if (typeof updates.delayMs === 'number') await dsp.delayMs(channelIndex, updates.delayMs);
+          if (updates.comp) await dsp.compressor(channelIndex, updates.comp);
+          if (updates.gate) await dsp.gate(channelIndex, updates.gate);
+        } catch { /* per-field best-effort */ }
+      })();
     }
   }
 
@@ -421,10 +444,7 @@ class DeviceManagerState {
 
       const dsp = device.store.dsp;
       if (!dsp) continue;
-      void this.#broadcastWithSync(
-        () => dsp.routing(outIndex, mask),
-        device
-      );
+      void dsp.routing(outIndex, mask).catch(() => {});
     }
   }
 
@@ -452,15 +472,13 @@ class DeviceManagerState {
       const b = eq.bands[bandIndex]!;
       const cal = device.store.calibration;
       if (!cal) continue;
-      void this.#broadcastWithSync(async () => {
-        await dsp.peqBand(channelIndex, bandIndex, {
-          freqHz: b.freqHz,
-          q: cal.bwOctToQ(b.bwOct, b.freqHz),
-          gainRaw: cal.peqGainDbToRaw(b.gainDb, b.type),
-          type: b.type,
-          bypass: b.bypass,
-        });
-      }, device);
+      void dsp.peqBand(channelIndex, bandIndex, {
+        freqHz: b.freqHz,
+        q: cal.bwOctToQ(b.bwOct, b.freqHz),
+        gainRaw: cal.peqGainDbToRaw(b.gainDb, b.type),
+        type: b.type,
+        bypass: b.bypass,
+      }).catch(() => {});
     }
   }
 
@@ -478,12 +496,11 @@ class DeviceManagerState {
       const cal = device.store.calibration;
       if (!dsp || !cal) continue;
       const x = (eq as any)[type];
-      void this.#broadcastWithSync(
-        type === 'hpf'
-          ? () => dsp.crossoverHpf(channelIndex, cal.xoverHzToRaw(x.freqHz), x.slope)
-          : () => dsp.crossoverLpf(channelIndex, cal.xoverHzToRaw(x.freqHz), x.slope),
-        device
-      );
+      if (type === 'hpf') {
+        void dsp.crossoverHpf(channelIndex, cal.xoverHzToRaw(x.freqHz), x.slope).catch(() => {});
+      } else {
+        void dsp.crossoverLpf(channelIndex, cal.xoverHzToRaw(x.freqHz), x.slope).catch(() => {});
+      }
     }
   }
 
