@@ -48,7 +48,14 @@
 
     let count = device.store.channels.length * 3; // gain, polarity, mute per channel
 
-    for (let i = inputChannels; i < device.store.channels.length; i++) {
+    // Input channels get gate (if set) - channels 0-3
+    for (let i = 0; i < inputChannels; i++) {
+      const ch = device.store.channels[i];
+      if (ch?.gate) count++;
+    }
+
+    // Output channels get additional messages - channels 4-7
+    for (let i = outputChannels; i < device.store.channels.length; i++) {
       const ch = device.store.channels[i];
       if (!ch) continue;
       if (ch.delayMs !== undefined) count++;
