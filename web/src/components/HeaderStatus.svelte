@@ -38,11 +38,24 @@
     message = '';
   }
 
+  // Get initial pending ops value for a device (based on channel count)
+  // This is set when #sendFullConfigToDeviceWithSync starts
+  function getInitialPendingOps(device: typeof deviceManager.devices[0]): number {
+    if (!device.store.channels) return 16; // Default 8 channels * 2 ops each
+    const channelCount = device.store.channels.length;
+    return channelCount * 2;
+  }
+
   // Calculate sync progress (0-100) based on pending operations
   function getSyncProgress(device: typeof deviceManager.devices[0]): number {
     if (!device.connected || device.pendingOps === 0) return 100;
-    // Show partial progress - as ops decrease, progress increases
-    return Math.max(5, 100 - (device.pendingOps * 10));
+
+    const initialOps = getInitialPendingOps(device);
+    if (initialOps <= 0) return 100;
+
+    // Progress increases as pending ops decrease
+    const progress = Math.round((1 - device.pendingOps / initialOps) * 100);
+    return Math.max(5, Math.min(100, progress));
   }
 
   function getDeviceShortId(guid: string | undefined): string {
@@ -75,8 +88,9 @@
       {#each deviceManager.connectedDevices as device (device.guid)}
         <div class="device-badge" title={`Device: ${device.connectionInfo.productName || 'Unknown'} (${getDeviceShortId(device.guid)})`}>
           <span class="device-id">{getDeviceShortId(device.guid)}</span>
+          <!-- Progress bar overlay - appears behind text, doesn't change badge width -->
           {#if device.pendingOps > 0}
-            <div class="sync-progress-bg">
+            <div class="sync-progress-overlay">
               <div
                 class="sync-progress-bar"
                 style={`width: ${getSyncProgress(device)}%`}
@@ -221,26 +235,33 @@
     border-radius: 12px;
     font-size: 0.75rem;
     color: var(--text-dim);
+    position: relative;
+    overflow: hidden;
   }
 
   .device-id {
     font-family: monospace;
     font-weight: 600;
     letter-spacing: 0.5px;
+    z-index: 2;
+    position: relative;
   }
 
-  .sync-progress-bg {
-    width: 40px;
-    height: 4px;
-    background: rgba(128, 128, 128, 0.3);
-    border-radius: 2px;
+  /* Progress bar overlay - appears behind text, doesn't change badge width */
+  .sync-progress-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1;
     overflow: hidden;
+    pointer-events: none;
   }
 
   .sync-progress-bar {
     height: 100%;
     background: var(--accent);
-    border-radius: 2px;
     transition: width 0.2s ease-out;
   }
 
