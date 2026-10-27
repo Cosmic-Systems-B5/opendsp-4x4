@@ -355,6 +355,7 @@ export class DeviceSvelte {
     const x = this.ch(i).eq!.hpf;
     this.commit(`hpf${i}`, () => this.dsp!.crossoverHpf(i, this.cal.xoverHzToRaw(x.freqHz), x.slope));
   }
+
   private sendLpf(i: number): void {
     const x = this.ch(i).eq!.lpf;
     this.commit(`lpf${i}`, () => this.dsp!.crossoverLpf(i, this.cal.xoverHzToRaw(x.freqHz), x.slope));

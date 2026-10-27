@@ -113,10 +113,7 @@
           <!-- Progress bar overlay - appears behind text, doesn't change badge width -->
           {#if device.pendingOps > 0}
             <div class="sync-progress-overlay">
-              <div
-                class="sync-progress-bar"
-                style={`width: ${getSyncProgress(device)}%`}
-              />
+              <div class="sync-progress-bar" style={`width: ${getSyncProgress(device)}%`}></div>
             </div>
           {/if}
         </div>

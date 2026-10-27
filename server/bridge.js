@@ -943,8 +943,18 @@ function sendBytesToDevice(device, bytes) {
         stateChanged = handleMockWrite(device, bytes);
         ok = true;
     } else if (device.hid) {
+        // Parse the request to detect state changes before sending to hardware
+        let parsed;
+        try { parsed = parseRequest(bytes); }
+        catch (e) { console.error(`parseRequest threw on ${device.guid}:`, e.message); }
+
         try { device.hid.write(new Uint8Array(bytes)); ok = true; }
         catch (e) { closeDevice(device.guid); return false; }
+
+        // Apply the write to settings so subscribers are notified of changes
+        if (parsed) {
+            stateChanged = applyWrite(device, parsed.code, parsed.data);
+        }
     } else {
         return false;
     }

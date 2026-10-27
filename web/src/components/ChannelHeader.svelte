@@ -14,7 +14,7 @@
   <button class="tgl" class:on={ch.mute} onclick={() => device.setMute(index, !ch.mute)}>Mute</button>
   <button class="tgl" class:on={ch.polarity} onclick={() => device.setPolarity(index, !ch.polarity)}>Ø</button>
   <button class="mode-toggle tgl" class:peq={ch.eqMode === "peq"} class:geq={ch.eqMode === "geq"} onclick={() => device.toggleEqMode(index)}>{ch.eqMode?.toUpperCase()}</button>
-  <div class="meter"><Meter level={ch.meter} horizontal /></div>
+  <div class="meter"><Meter value={ch.meter} horizontal /></div>
 </div>
 
 <style>

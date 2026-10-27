@@ -1,7 +1,7 @@
 <script lang="ts">
   // Level meter (0..1). Vertical by default. Live data arrives in Phase A (0x40 poll).
-  let { level = 0, horizontal = false }: { level?: number; horizontal?: boolean } = $props();
-  const pct = $derived(Math.max(0, Math.min(1, level)) * 100);
+  let { value = 0, horizontal = false }: { value?: number; horizontal?: boolean } = $props();
+  const pct = $derived(Math.max(0, Math.min(1, value)) * 100);
 </script>
 
 <div class="meter" class:h={horizontal}>

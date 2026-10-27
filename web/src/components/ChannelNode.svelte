@@ -32,7 +32,7 @@
   {:else}
     <button class="collapsed" onclick={() => (device.selected = index)} title="Open {ch.name}">
       <span class="cdot"></span><span class="cname">{ch.name}</span>
-      <span class="mini"><Meter level={ch.meter} horizontal /></span>
+      <span class="mini"><Meter value={ch.meter} horizontal /></span>
       {#if ch.mute}<span class="tag">M</span>{/if}{#if ch.polarity}<span class="tag">Ø</span>{/if}
     </button>
   {/if}

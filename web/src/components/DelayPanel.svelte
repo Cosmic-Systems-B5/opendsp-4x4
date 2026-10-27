@@ -21,6 +21,7 @@
   function commit() {
     device.setDelayMs(index, ch.delayMs ?? 0);
   }
+
 </script>
 
 <div class="band" style="margin-top: .6rem;">
